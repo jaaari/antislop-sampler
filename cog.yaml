@@ -1,0 +1,37 @@
+# Configuration for Cog ⚙️
+# Reference: https://cog.run/yaml
+
+build:
+  # set to true if your model requires a GPU
+  gpu: true
+
+  # a list of ubuntu apt packages to install
+  # system_packages:
+  #   - "libgl1-mesa-glx"
+  #   - "libglib2.0-0"
+
+  # python version in the form '3.11' or '3.11.4'
+  python_version: "3.11"
+
+  # a list of packages in the format <package-name>==<version>
+  python_packages:
+    - "torch==2.1.2"
+    - "transformers>=4.38.1"
+    - "accelerate==0.27.2"
+    - "bitsandbytes==0.42.0"
+    - "pydantic==1.10.13"
+    - "numpy==1.26.4"
+    - "tqdm==4.66.2"
+    - "wordfreq==3.0.3"
+    - "fastapi==0.99.1"
+    - "uvicorn==0.24.0"
+    - "ipython==8.12.0"
+    - "ipywidgets==8.0.4"
+
+  # commands run after the environment is setup
+  # run:
+  #   - "echo env is ready!"
+  #   - "echo another command if needed"
+
+# predict.py defines how predictions are run on your model
+predict: "predict.py:Predictor"

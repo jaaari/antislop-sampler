@@ -1,0 +1,14 @@
+torch
+transformers
+ipywidgets
+IPython
+fastapi
+uvicorn
+pydantic
+numpy
+tqdm
+datasets
+wordfreq
+bitsandbytes
+accelerate
+requests 
