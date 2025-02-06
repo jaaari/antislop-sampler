@@ -17,17 +17,29 @@ class Predictor(BasePredictor):
         # Model path - using local files
         model_path = "./gemma_model"
         
-        # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        # Load tokenizer with trust_remote_code for newer models
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True
+        )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
-        # Load model
+        # Load model with improved configuration
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
-            device_map="auto"
+            device_map="auto",
+            trust_remote_code=True,
+            use_cache=True,
+            # Add low_cpu_mem_usage for better memory management
+            low_cpu_mem_usage=True
         )
+        
+        # Optimize model if possible
+        self.model.eval()
+        if torch.cuda.is_available():
+            self.model = torch.compile(self.model)  # Optional: Can improve performance but may increase initial load time
 
     def predict(
         self,
