@@ -14,14 +14,17 @@ class Predictor(BasePredictor):
         # Set device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Load from local files instead of downloading
-        self.tokenizer = AutoTokenizer.from_pretrained("./models/tokenizer")
+        # Model path - using local files
+        model_path = "./gemma_model"
+        
+        # Load tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
-        # Load model from local files
+        # Load model
         self.model = AutoModelForCausalLM.from_pretrained(
-            "./models/model",
+            model_path,
             torch_dtype=torch.bfloat16,
             device_map="auto"
         )

@@ -7,3 +7,4 @@ venv/*
 *.pyw
 *.pyz
 *.pywz
+gemma_model/*
