@@ -661,6 +661,8 @@ def generate_antislop(
     """
     Wrapper function for generate_antislop that handles both streaming and non-streaming modes.
     """
+    print('generate_antislop')
+
     # Type checking and validation of input arguments
     if not isinstance(prompt, str):
         raise TypeError("prompt must be a string")
@@ -786,10 +788,10 @@ def _generate_antislop(
     slop_phrase_prob_adjustments: Dict[str, float] = None,
     adjustment_strength: float = 1.0,
     device: torch.device = torch.device('cuda'),
-    slow_debug: bool = False,  # Added slow_debug
+    slow_debug: bool = False,
     output_every_n_tokens: int = 1,
     debug_delay: float = 2.0,
-    inference_output: 'Output' = None,  # Assuming Output is defined elsewhere
+    inference_output: 'Output' = None,
     debug_output: 'Output' = None,
     streaming: bool = False,
     stream_smoothing: bool = True,
@@ -801,6 +803,14 @@ def _generate_antislop(
     Generates text while avoiding overrepresented phrases (slop).
     This function is now always a generator with temporal buffering.
     """
+    
+    if slop_phrase_prob_adjustments:
+        print("\n=== AntiSlop Configuration ===")
+        print(f"Adjustment Strength: {adjustment_strength}")
+        print("Monitored Phrases:")
+        for phrase, adj in slop_phrase_prob_adjustments.items():
+            print(f"  '{phrase}': {adj}")
+        print("=========================\n")
 
     if streaming and regex_bans:
         raise ValueError("Streaming is not supported when using regex patterns.")
@@ -937,6 +947,13 @@ def _generate_antislop(
                 time.sleep(0.02)  # Constant delay as per user's instruction
 
     finally:
+        # Get the statistics before cleanup
+        if antislop_enabled and sampler.slop_hits:
+            print("\n=== Final AntiSlop Statistics ===")
+            for phrase, count in sampler.slop_hits.items():
+                print(f"'{phrase}': {count} hits")
+            print("=========================\n")
+            
         # Stop the event loop
         loop.call_soon_threadsafe(loop.stop)
         # Wait for the thread to finish
