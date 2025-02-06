@@ -14,17 +14,14 @@ class Predictor(BasePredictor):
         # Set device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Model name - using a smaller model for testing
-        model_name = "lemon07r/Gemma-2-Ataraxy-v2-9B"
-        
-        # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # Load from local files instead of downloading
+        self.tokenizer = AutoTokenizer.from_pretrained("./models/tokenizer")
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
-        # Load model
+        # Load model from local files
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
+            "./models/model",
             torch_dtype=torch.bfloat16,
             device_map="auto"
         )

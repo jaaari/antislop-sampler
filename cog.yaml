@@ -29,9 +29,9 @@ build:
     - "ipywidgets==8.0.4"
 
   # commands run after the environment is setup
-  # run:
-  #   - "echo env is ready!"
-  #   - "echo another command if needed"
+  run:
+    - "mkdir -p models/model models/tokenizer"
+    - "python prepare.py"
 
 # predict.py defines how predictions are run on your model
 predict: "predict.py:Predictor"
