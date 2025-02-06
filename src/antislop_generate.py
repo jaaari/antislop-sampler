@@ -99,6 +99,9 @@ class AntiSlopSampler:
 
         self.streamer_retval = None
 
+        # Add logging counter
+        self.slop_hits = {}  # Track number of hits per phrase
+
     def _generate_streaming(self, current_input_ids, new_toks_to_generate, temperature, min_p, top_k, top_p, pad_token_id, stopping_criteria_args):
         streamer = TextIteratorStreamer(self.tokenizer, skip_special_tokens=False)
 
@@ -454,6 +457,13 @@ class AntiSlopSampler:
         # Make a copy of the probabilities to ensure we do not modify the original tensor
         probs = probs.clone()
 
+        # Log any slop adjustments that were applied
+        if hasattr(self, 'slop_phrase_handler') and self.slop_phrase_handler.last_adjusted_phrase:
+            phrase = self.slop_phrase_handler.last_adjusted_phrase
+            self.slop_hits[phrase] = self.slop_hits.get(phrase, 0) + 1
+            print(f"🚫 Slop detected: '{phrase}' (hit #{self.slop_hits[phrase]})")
+            self.slop_phrase_handler.last_adjusted_phrase = None  # Reset for next time
+
         # Apply min_p filtering
         if min_p is not None:
             top_prob, _ = torch.max(probs, dim=-1)
@@ -503,6 +513,13 @@ class AntiSlopSampler:
         return
     
     def cleanup(self):
+        # Print final slop statistics
+        if self.slop_hits:
+            print("\n=== Final Slop Statistics ===")
+            for phrase, count in self.slop_hits.items():
+                print(f"'{phrase}': {count} hits")
+            print("=========================\n")
+            
         # Clear the queue
         while not self.sequence_queue.empty():
             try:
