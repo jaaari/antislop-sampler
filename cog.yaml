@@ -28,11 +28,10 @@ build:
     - "ipython==8.12.0"
     - "ipywidgets==8.0.4"
 
-  # First copy all necessary files, then create directories and run prepare script
+  # Use relative paths and simplified commands
   run:
-    - "cp /src/prepare.py /prepare.py"  # Copy prepare.py to a known location
     - "mkdir -p models/model models/tokenizer"
-    - "python /prepare.py"
+    - "python ./prepare.py"
 
 # predict.py defines how predictions are run on your model
 predict: "predict.py:Predictor"
