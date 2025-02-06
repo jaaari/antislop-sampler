@@ -17,17 +17,16 @@ class Predictor(BasePredictor):
         # Model name - using a smaller model for testing
         model_name = "lemon07r/Gemma-2-Ataraxy-v2-9B"
         
-        # Load tokenizer with auth token
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
+        # Load tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
-        # Load model with auth token
+        # Load model
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
-            device_map="auto",
-            token=hf_token
+            device_map="auto"
         )
 
     def predict(
