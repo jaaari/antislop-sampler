@@ -15,10 +15,7 @@ class Predictor(BasePredictor):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Model name - using a smaller model for testing
-        model_name = "google/gemma-2-2b"
-        
-        # Add HF token for authentication
-        hf_token = "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"  # You'll need to get this from HuggingFace
+        model_name = "lemon07r/Gemma-2-Ataraxy-v2-9B"
         
         # Load tokenizer with auth token
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
