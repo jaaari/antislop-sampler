@@ -46,6 +46,22 @@ def detect_disallowed_sequence(tokenizer: PreTrainedTokenizer,
                 # Instead of printing an error, simply continue with the next candidate.
     return None, -1
 
+def compute_prefix_banned_tokens(tokenizer: PreTrainedTokenizer, phrase: str, max_length: int = 7) -> set:
+    """
+    Compute all token IDs for every possible prefix (from 1 to max_length characters)
+    of the given phrase. Excludes a prefix that is exactly a single space.
+    """
+    banned_tokens = set()
+    phrase = phrase.lower()  # Normalize to lower-case for consistency.
+    for i in range(1, min(len(phrase), max_length) + 1):
+        prefix = phrase[:i]
+        if prefix == " ":
+            continue
+        token_ids = tokenizer.encode(prefix, add_special_tokens=False)
+        # Add all token IDs produced by the encoding to be robust against tokenization variance.
+        banned_tokens.update(token_ids)
+    return banned_tokens
+
 class SlopPhraseHandler:
     def __init__(
         self,
@@ -134,19 +150,18 @@ class SlopPhraseHandler:
         print(debug_msg)
         self._display_debug(debug_msg)
 
-        starting_tokens = self.starting_tokens_lookup.get(matched_lower, set())
-        # Include the token at the start position in the starting set.
-        slop_phrase_starting_token = generated_sequence[start_pos]
-        starting_tokens.add(slop_phrase_starting_token)
-
+        # Compute all possible prefix token IDs (up to 7 characters) for the matched phrase.
+        banned_tokens = compute_prefix_banned_tokens(tokenizer, matched_lower, max_length=7)
+        
+        # Decide whether to remove or keep the detected phrase.
         if random.random() < removal_probability:
-            # Removal branch: force removal by banning tokens leading to the phrase.
-            # Update probability cache for the current position if available.
-            for token_id in starting_tokens:
+            # Removal branch: update the cached logits, zeroing out all computed banned tokens.
+            for token_id in banned_tokens:
                 if start_pos in self.probs_cache:
+                    # Setting near-zero probability for the banned token at the backtracking point.
                     self.probs_cache[start_pos][:, token_id] = 1e-10
-            # Additionally, update forbidden tokens so future sampling avoids them.
-            self.forbidden_starting_tokens.update(starting_tokens)
+            # Update the global forbidden_tokens list so that subsequent filtering rules out these tokens.
+            self.forbidden_starting_tokens.update(banned_tokens)
             removal_decision = f"Removal threshold met (random < {removal_probability:.2f}). Backtracking from token pos {start_pos}."
             print(removal_decision)
             self._display_debug(removal_decision)
@@ -164,7 +179,7 @@ class SlopPhraseHandler:
             self.ignore_until = len(generated_sequence)
             return generated_sequence
         else:
-            # Keep branch: simply update the safe-check index so we do not re-trigger on this phrase.
+            # Keep branch: update ignore_until, so future detections ignore up to this point.
             phrase_token_count = len(tokenizer.encode(matched_phrase, add_special_tokens=False))
             new_ignore_until = start_pos + phrase_token_count
             self.ignore_until = max(self.ignore_until, new_ignore_until)
