@@ -194,7 +194,7 @@ class SlopPhraseHandler:
                 token_text = tokenizer.decode([token_id])
                 orig_prob = original_banned_probs[token_id]
                 new_prob = adjusted_probs[token_id].item()
-                debug_tokens += f"\n{token_text!r}: {orig_prob:.8f} → {new_prob:.8f}"
+                debug_tokens += f"\n{token_text!r}: {orig_prob:.8f} → {new_prob:.8f} (id: {token_id})"
 
             # Update the cache with adjusted logits
             self.probs_cache[start_pos] = adjusted_logits
