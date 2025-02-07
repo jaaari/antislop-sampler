@@ -165,20 +165,8 @@ class SlopPhraseHandler:
             removal_decision = f"Removal threshold met (random < {removal_probability:.2f}). Backtracking from token pos {start_pos}."
             print(removal_decision)
             self._display_debug(removal_decision)
-            removed_tokens = generated_sequence[start_pos:]
-            removed_text = tokenizer.decode(removed_tokens, skip_special_tokens=True)
-            backtrack_message = f"Tokens from position {start_pos} onward have been removed. Removed text: '{removed_text}'"
-            print(backtrack_message)
-            self._display_debug(backtrack_message)
-            for _ in range(len(generated_sequence) - start_pos):
-                generated_sequence.pop()
-            to_del = [key for key in self.probs_cache if key >= start_pos]
-            for key in to_del:
-                del self.probs_cache[key]
-            # Update safe index after backtracking.
-            self.ignore_until = len(generated_sequence)
 
-            # After backtracking, show top 5 tokens for the next position
+            # Get the probabilities BEFORE we delete the cache
             if start_pos in self.probs_cache:
                 logits = self.probs_cache[start_pos]
                 probs = torch.softmax(logits[0], dim=-1)
@@ -188,7 +176,18 @@ class SlopPhraseHandler:
                 for prob, idx in zip(top_probs.tolist(), top_indices.tolist()):
                     token_text = tokenizer.decode([idx])
                     debug_tokens += f"\n{token_text!r}: {prob:.4f}"
-                
+
+            # Now do the backtracking and cache clearing
+            for _ in range(len(generated_sequence) - start_pos):
+                generated_sequence.pop()
+            to_del = [key for key in self.probs_cache if key >= start_pos]
+            for key in to_del:
+                del self.probs_cache[key]
+            # Update safe index after backtracking.
+            self.ignore_until = len(generated_sequence)
+
+            # Print the debug tokens after backtracking
+            if 'debug_tokens' in locals():
                 print(debug_tokens)
                 self._display_debug(debug_tokens)
             
