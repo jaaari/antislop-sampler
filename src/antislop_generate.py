@@ -461,7 +461,10 @@ class AntiSlopSampler:
         if hasattr(self, 'slop_phrase_handler') and self.slop_phrase_handler.last_adjusted_phrase:
             phrase = self.slop_phrase_handler.last_adjusted_phrase
             self.slop_hits[phrase] = self.slop_hits.get(phrase, 0) + 1
-            print(f"🚫 Slop detected: '{phrase}' (hit #{self.slop_hits[phrase]})")
+            # Use print with flush=True to ensure immediate output
+            print(f"🚫 Slop detected: '{phrase}' (hit #{self.slop_hits[phrase]})", flush=True)
+            import sys
+            sys.stdout.flush()
             self.slop_phrase_handler.last_adjusted_phrase = None  # Reset for next time
 
         # Apply min_p filtering
@@ -805,12 +808,15 @@ def _generate_antislop(
     """
     
     if slop_phrase_prob_adjustments:
-        print("\n=== AntiSlop Configuration ===")
-        print(f"Adjustment Strength: {adjustment_strength}")
-        print("Monitored Phrases:")
+        # Use print with flush=True to ensure immediate output
+        print("\n=== AntiSlop Configuration ===", flush=True)
+        print(f"Adjustment Strength: {adjustment_strength}", flush=True)
+        print("Monitored Phrases:", flush=True)
         for phrase, adj in slop_phrase_prob_adjustments.items():
-            print(f"  '{phrase}': {adj}")
-        print("=========================\n")
+            print(f"  '{phrase}': {adj}", flush=True)
+        print("=========================\n", flush=True)
+        import sys
+        sys.stdout.flush()
 
     if streaming and regex_bans:
         raise ValueError("Streaming is not supported when using regex patterns.")
@@ -949,10 +955,13 @@ def _generate_antislop(
     finally:
         # Get the statistics before cleanup
         if antislop_enabled and sampler.slop_hits:
-            print("\n=== Final AntiSlop Statistics ===")
+            # Use print with flush=True to ensure immediate output
+            print("\n=== Final AntiSlop Statistics ===", flush=True)
             for phrase, count in sampler.slop_hits.items():
-                print(f"'{phrase}': {count} hits")
-            print("=========================\n")
+                print(f"'{phrase}': {count} hits", flush=True)
+            print("=========================\n", flush=True)
+            import sys
+            sys.stdout.flush()
             
         # Stop the event loop
         loop.call_soon_threadsafe(loop.stop)
