@@ -95,6 +95,7 @@ class SlopPhraseHandler:
         inference_output: Output,
         debug_output: Output,
         debug_delay: float,
+        prompt_length: int,
     ) -> List[int]:
         """
         Handles a detected disallowed sequence by downregulating or removing it from the generated_sequence.
@@ -104,7 +105,7 @@ class SlopPhraseHandler:
         so for example a frequency of 0.03125 and strength 50 results in ~52% chance.
         """
         # Build some context for logging.
-        full_inference = tokenizer.decode(generated_sequence[self.prompt_length:], skip_special_tokens=True)
+        full_inference = tokenizer.decode(generated_sequence[prompt_length:], skip_special_tokens=True)
         matched_lower = matched_phrase.lower()
         idx = full_inference.lower().find(matched_lower)
         context_buffer = 15
@@ -172,7 +173,7 @@ class SlopPhraseHandler:
             self._display_debug(mild_message)
             return generated_sequence
 
-    def deslop(self, generated_sequence, prompt_length):
+    def deslop(self, generated_sequence: List[int], prompt_length: int):
         # If we've not advanced beyond the last detection end, skip checking
         if len(generated_sequence) <= self.last_detection_end:
             return False
@@ -182,13 +183,15 @@ class SlopPhraseHandler:
             skip_special_tokens=True
         )
 
-        matched_phrase, start_pos = detect_disallowed_sequence(self.tokenizer,
-                                                               inference,
-                                                               generated_sequence,
-                                                               prompt_length,
-                                                               self.slop_phrase_prob_adjustments,
-                                                               self.max_slop_phrase_length,
-                                                               self.min_slop_phrase_length)
+        matched_phrase, start_pos = detect_disallowed_sequence(
+            self.tokenizer,
+            inference,
+            generated_sequence,
+            prompt_length,
+            self.slop_phrase_prob_adjustments,
+            self.max_slop_phrase_length,
+            self.min_slop_phrase_length,
+        )
 
         if matched_phrase:
             # If you forcibly remove or keep, update self.last_detection_end
@@ -226,7 +229,8 @@ class SlopPhraseHandler:
                 tokenizer=self.tokenizer,
                 inference_output=self.inference_output,
                 debug_output=self.debug_output,
-                debug_delay=self.debug_delay,                
+                debug_delay=self.debug_delay,
+                prompt_length=prompt_length,
             )
 
             return generated_sequence
