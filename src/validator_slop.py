@@ -203,14 +203,15 @@ class SlopPhraseHandler:
             for token_id in banned_tokens:
                 if start_pos in self.probs_cache:
                     # Setting near-zero probability for the banned token at the backtracking point.
-                    self.probs_cache[start_pos][:, token_id] = 1e-10
-            # Update the global forbidden_tokens list so that subsequent filtering rules out these tokens.
+                    self.probs_cache[start_pos][:, token_id] = float('-inf')  # Changed from 1e-10 to -inf
+            # Update the global forbidden_tokens list
             self.forbidden_starting_tokens.update(banned_tokens)
             removal_decision = f"Removal threshold met (random < {removal_probability:.2f}). Backtracking from token pos {start_pos}."
             print(removal_decision)
             self._display_debug(removal_decision)
 
             # Now do the backtracking and cache clearing
+            original_length = len(generated_sequence)
             for _ in range(len(generated_sequence) - start_pos):
                 generated_sequence.pop()
             to_del = [key for key in self.probs_cache if key >= start_pos]
@@ -224,13 +225,29 @@ class SlopPhraseHandler:
                 print(debug_tokens)
                 self._display_debug(debug_tokens)
             
-            # NEW: Log the actual next token chosen after backtracking
-            if len(generated_sequence) > start_pos:
-                next_token = generated_sequence[start_pos]
-                next_token_text = tokenizer.decode([next_token])
-                chosen_token_msg = f"\nActual next token chosen: {next_token_text!r} (id: {next_token})"
-                print(chosen_token_msg)
-                self._display_debug(chosen_token_msg)
+            # Log the sequence state after backtracking
+            backtrack_msg = (
+                f"\nBacktracking summary:"
+                f"\nOriginal sequence length: {original_length}"
+                f"\nNew sequence length: {len(generated_sequence)}"
+                f"\nBacktracked to position: {start_pos}"
+                f"\nForbidden tokens count: {len(self.forbidden_starting_tokens)}"
+            )
+            print(backtrack_msg)
+            self._display_debug(backtrack_msg)
+
+            # Get the next token that will be generated (if available in probs_cache)
+            if start_pos in self.probs_cache:
+                logits = self.probs_cache[start_pos]
+                next_probs = torch.softmax(logits[0], dim=-1)
+                # Get top 5 possible next tokens
+                top_probs, top_indices = torch.topk(next_probs, k=5)
+                next_tokens_msg = "\nPossible next tokens after backtracking:"
+                for prob, idx in zip(top_probs.tolist(), top_indices.tolist()):
+                    token_text = tokenizer.decode([idx])
+                    next_tokens_msg += f"\n{token_text!r}: {prob:.8f}"
+                print(next_tokens_msg)
+                self._display_debug(next_tokens_msg)
             
             return generated_sequence
         else:
