@@ -48,8 +48,9 @@ def detect_disallowed_sequence(tokenizer: PreTrainedTokenizer,
 
 def compute_prefix_banned_tokens(tokenizer: PreTrainedTokenizer, phrase: str) -> set:
     """
-    Compute all token IDs for every possible substring of the phrase,
+    Compute token IDs for all possible prefixes of the phrase,
     considering both space-prefixed and non-space-prefixed versions.
+    Only bans tokens that could start the phrase.
     """
     banned_tokens = set()
     phrase = phrase.lower()  # Normalize to lower-case for consistency
@@ -58,16 +59,17 @@ def compute_prefix_banned_tokens(tokenizer: PreTrainedTokenizer, phrase: str) ->
     phrases_to_check = [phrase, ' ' + phrase]
     
     for phrase_variant in phrases_to_check:
-        # Generate all possible substrings
-        for i in range(len(phrase_variant)):
-            for j in range(i + 1, len(phrase_variant) + 1):
-                substring = phrase_variant[i:j]
-                # Skip single space tokens
-                if substring.strip() == "":
-                    continue
-                # Get token IDs for this substring
-                token_ids = tokenizer.encode(substring, add_special_tokens=False)
-                banned_tokens.update(token_ids)
+        # Only generate prefixes, not all substrings
+        for end_pos in range(1, len(phrase_variant) + 1):
+            prefix = phrase_variant[:end_pos]
+            # Skip single space tokens
+            if prefix.strip() == "":
+                continue
+            # Get token IDs for this prefix
+            token_ids = tokenizer.encode(prefix, add_special_tokens=False)
+            # Only ban the first token of each prefix
+            if token_ids:
+                banned_tokens.add(token_ids[0])
     
     return banned_tokens
 
