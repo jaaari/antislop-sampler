@@ -114,6 +114,8 @@ class SlopPhraseHandler:
         self.ignore_until = None
         # New attribute to track tokens that should be banned due to removal decisions.
         self.forbidden_starting_tokens = set()
+        self.waiting_for_next_token = False  # Add this new attribute
+        self.last_backtrack_pos = None       # Add this to track position
 
     def _handle_disallowed_sequence(
         self,
@@ -249,6 +251,10 @@ class SlopPhraseHandler:
                 print(next_tokens_msg)
                 self._display_debug(next_tokens_msg)
             
+            # Set flag to check next token on next call
+            self.waiting_for_next_token = True
+            self.last_backtrack_pos = start_pos
+            
             return generated_sequence
         else:
             # Keep branch: update ignore_until, so future detections ignore up to this point.
@@ -261,6 +267,16 @@ class SlopPhraseHandler:
             return generated_sequence
 
     def deslop(self, generated_sequence: List[int], prompt_length: int, newly_added_count: int = 1):
+        # At the start, check if we were waiting for a next token
+        if self.waiting_for_next_token and len(generated_sequence) > self.last_backtrack_pos:
+            next_token = generated_sequence[self.last_backtrack_pos]
+            next_token_text = self.tokenizer.decode([next_token])
+            next_token_msg = f"\nActual token chosen after backtrack: {next_token_text!r} (id: {next_token})"
+            print(next_token_msg)
+            self._display_debug(next_token_msg)
+            self.waiting_for_next_token = False
+            self.last_backtrack_pos = None
+
         # Initialize the ignore_until value (the safe token index) on first call.
         if self.ignore_until is None:
             self.ignore_until = prompt_length
