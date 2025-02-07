@@ -8,6 +8,7 @@ from transformers import (
 )
 from IPython.display import display, HTML
 from ipywidgets import Output
+import random
 
 
 # This function detects if any of the slop phrases are in the end segment of inference.
@@ -130,83 +131,45 @@ class SlopPhraseHandler:
         print(detection_message)
         self._display_debug(detection_message)
 
-        adjustment = self.slop_phrase_prob_adjustments[matched_phrase.lower()]
-
-        if slow_debug:
-            time.sleep(debug_delay)
-
-        # Show top-5 predicted tokens (before downregulation), if available
-        if start_pos in self.probs_cache:
-            token_probs = self.probs_cache[start_pos]
-            top_values, top_indices = torch.topk(token_probs, 5, dim=1)
-
-            prob_debug_info = "[SlopDetector] Top-5 predicted token candidates before downregulation:\n"
-            for rank in range(5):
-                token_id = top_indices[0, rank].item()
-                token_str = tokenizer.decode([token_id], skip_special_tokens=True)
-                prob_val = top_values[0, rank].item()
-                prob_debug_info += f"{rank+1}) '{token_str}' p={prob_val:.5f}\n"
-
-            self._display_debug(prob_debug_info)
-            print(prob_debug_info)
-        else:
-            # If no cached logits, we can't show top-5
-            token_probs = None
+        # Instead of applying exponentiation, we now interpret the adjustment factor
+        # as a percentage removal chance.
+        removal_probability = self.slop_phrase_prob_adjustments[matched_phrase.lower()] / 100.0
 
         # Identify all tokens we plan to downregulate
         slop_phrase_starting_token = generated_sequence[start_pos]
         starting_tokens = self.starting_tokens_lookup.get(matched_phrase.lower(), set())
         starting_tokens.add(slop_phrase_starting_token)
 
-        downregulating_message = (
-            "[SlopDetector] Downregulating the probability of these tokens: "
-            f"{', '.join([tokenizer.decode([t], skip_special_tokens=True) for t in starting_tokens])}"
-        )
-        print(downregulating_message)
-        self._display_debug(downregulating_message)
-
-        # Grab the old probability for the matched token if we can find it
-        matched_token_newprob = None
-        matched_token_rank = None
-
-        if token_probs is not None:
-            # We'll see if the phrase's "starting token" or anything in starting_tokens is in top-5
-            # Just find whichever is top in the top-5 for logging rank or fallback if not in top-5
-            for rank in range(5):
-                token_id = top_indices[0, rank].item()
-                if token_id in starting_tokens:
-                    matched_token_rank = rank + 1
-                    break
-
-        # Downregulate each token in `starting_tokens`
         for token_id in starting_tokens:
             if start_pos in self.probs_cache:
+                # Get old probability for logging (if needed)
                 p_old = self.probs_cache[start_pos][0, token_id].item()
-                # multiply in place
-                self.probs_cache[start_pos][:, token_id] *= adjustment ** adjustment_strength
-                if token_id in starting_tokens and matched_token_newprob is None:
-                    # We'll store whichever we see first
-                    p_new = p_old * (adjustment ** adjustment_strength)
-                    matched_token_newprob = (token_id, p_old, p_new)
+                # Apply probabilistic downregulation
+                if random.random() < removal_probability:
+                    # Strong removal into near-zero probability
+                    self.probs_cache[start_pos][:, token_id] *= 0.01
+                else:
+                    # Otherwise, apply a smaller reduction
+                    self.probs_cache[start_pos][:, token_id] *= 0.95
             else:
-                # If not in probs_cache, can't do anything
+                # If not in probs_cache, we can't do anything
                 pass
 
         # Print one line with "Slop after regulating"
         # If we have matched_token_newprob data:
-        if matched_token_newprob:
-            token_str = tokenizer.decode([matched_token_newprob[0]], skip_special_tokens=True)
-            p_old_float = matched_token_newprob[1]
-            p_new_float = matched_token_newprob[2]
+        if start_pos in self.probs_cache:
+            token_str = tokenizer.decode([slop_phrase_starting_token], skip_special_tokens=True)
+            p_old_float = p_old
+            p_new_float = self.probs_cache[start_pos][0, slop_phrase_starting_token].item()
             # We also have the factor = adjustment^adjustment_strength
-            factor_str = f"{adjustment}^{adjustment_strength}"
+            factor_str = f"{removal_probability:.2f}"
             # Rank or blank
-            rank_prefix = f"{matched_token_rank}) " if matched_token_rank else ""
+            rank_prefix = ""
             # E.g. "4) 'symphony' p=0.03125^20.0=0.00000"
             slop_after_line = f"{rank_prefix}'{token_str}' p={factor_str}={p_new_float:.5g}"
         else:
             # fallback
-            slop_after_line = f"'{matched_phrase}' p={adjustment}^{adjustment_strength}= (no data)"
+            slop_after_line = f"'{matched_phrase}' p={removal_probability:.2f}"
 
         after_regulation_msg = (
             "[SlopDetector] Slop after regulating:\n" f"{slop_after_line}"
