@@ -147,7 +147,7 @@ class SlopPhraseHandler:
             # Strong removal: scale tokens in the starting set to near zero.
             for token_id in starting_tokens:
                 if start_pos in self.probs_cache:
-                    self.probs_cache[start_pos][:, token_id] *= 0.01
+                    self.probs_cache[start_pos][:, token_id] = 1e-10  # or outright 0
             removal_decision = f"Threshold met (random < {removal_probability:.2f}). Backtracking from token pos {start_pos}."
             print(removal_decision)
             self._display_debug(removal_decision)
