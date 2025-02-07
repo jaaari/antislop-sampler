@@ -46,21 +46,24 @@ def detect_disallowed_sequence(tokenizer: PreTrainedTokenizer,
                 # Instead of printing an error, simply continue with the next candidate.
     return None, -1
 
-def compute_prefix_banned_tokens(tokenizer: PreTrainedTokenizer, phrase: str, max_length: int = None) -> set:
+def compute_prefix_banned_tokens(tokenizer: PreTrainedTokenizer, phrase: str) -> set:
     """
-    Compute all token IDs for every possible prefix of the given phrase.
-    If max_length is None, process the entire phrase.
+    Compute all token IDs for every possible substring of the phrase.
     """
     banned_tokens = set()
-    phrase = phrase.lower()  # Normalize to lower-case for consistency.
-    max_len = len(phrase) if max_length is None else min(len(phrase), max_length)
-    for i in range(1, max_len + 1):
-        prefix = phrase[:i]
-        if prefix == " ":
-            continue
-        token_ids = tokenizer.encode(prefix, add_special_tokens=False)
-        # Add all token IDs produced by the encoding to be robust against tokenization variance.
-        banned_tokens.update(token_ids)
+    phrase = phrase.lower()  # Normalize to lower-case for consistency
+    
+    # Generate all possible substrings
+    for i in range(len(phrase)):
+        for j in range(i + 1, len(phrase) + 1):
+            substring = phrase[i:j]
+            # Skip single space tokens
+            if substring.strip() == "":
+                continue
+            # Get token IDs for this substring
+            token_ids = tokenizer.encode(substring, add_special_tokens=False)
+            banned_tokens.update(token_ids)
+    
     return banned_tokens
 
 class SlopPhraseHandler:
@@ -156,10 +159,8 @@ class SlopPhraseHandler:
             logits = self.probs_cache[start_pos]
             original_probs = torch.softmax(logits[0], dim=-1)
             
-            # Get the full token for the matched phrase
-            full_tokens = tokenizer.encode(matched_lower, add_special_tokens=False)
+            # Get ALL possible substrings as banned tokens
             banned_tokens = compute_prefix_banned_tokens(tokenizer, matched_lower)
-            banned_tokens.update(full_tokens)  # Add the full tokens to the banned set
             
             # Store original probabilities before adjustment
             original_banned_probs = {token_id: original_probs[token_id].item() for token_id in banned_tokens}
@@ -167,7 +168,7 @@ class SlopPhraseHandler:
             # Now adjust the probabilities
             adjusted_logits = logits.clone()  # Create a copy of the logits
             for token_id in banned_tokens:
-                adjusted_logits[:, token_id] = float('-inf')  # Set to negative infinity instead of 1e-10
+                adjusted_logits[:, token_id] = float('-inf')  # Set to negative infinity
             
             # Get new probabilities after adjustment
             adjusted_probs = torch.softmax(adjusted_logits[0], dim=-1)
