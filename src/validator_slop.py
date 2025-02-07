@@ -224,6 +224,14 @@ class SlopPhraseHandler:
                 print(debug_tokens)
                 self._display_debug(debug_tokens)
             
+            # NEW: Log the actual next token chosen after backtracking
+            if len(generated_sequence) > start_pos:
+                next_token = generated_sequence[start_pos]
+                next_token_text = tokenizer.decode([next_token])
+                chosen_token_msg = f"\nActual next token chosen: {next_token_text!r} (id: {next_token})"
+                print(chosen_token_msg)
+                self._display_debug(chosen_token_msg)
+            
             return generated_sequence
         else:
             # Keep branch: update ignore_until, so future detections ignore up to this point.
