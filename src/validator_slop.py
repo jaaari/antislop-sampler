@@ -46,14 +46,15 @@ def detect_disallowed_sequence(tokenizer: PreTrainedTokenizer,
                 # Instead of printing an error, simply continue with the next candidate.
     return None, -1
 
-def compute_prefix_banned_tokens(tokenizer: PreTrainedTokenizer, phrase: str, max_length: int = 7) -> set:
+def compute_prefix_banned_tokens(tokenizer: PreTrainedTokenizer, phrase: str, max_length: int = None) -> set:
     """
-    Compute all token IDs for every possible prefix (from 1 to max_length characters)
-    of the given phrase. Excludes a prefix that is exactly a single space.
+    Compute all token IDs for every possible prefix of the given phrase.
+    If max_length is None, process the entire phrase.
     """
     banned_tokens = set()
     phrase = phrase.lower()  # Normalize to lower-case for consistency.
-    for i in range(1, min(len(phrase), max_length) + 1):
+    max_len = len(phrase) if max_length is None else min(len(phrase), max_length)
+    for i in range(1, max_len + 1):
         prefix = phrase[:i]
         if prefix == " ":
             continue
@@ -150,9 +151,38 @@ class SlopPhraseHandler:
         print(debug_msg)
         self._display_debug(debug_msg)
 
-        # Compute all possible prefix token IDs (up to 7 characters) for the matched phrase.
-        banned_tokens = compute_prefix_banned_tokens(tokenizer, matched_lower, max_length=7)
-        
+        # Get the probabilities BEFORE we adjust them
+        if start_pos in self.probs_cache:
+            logits = self.probs_cache[start_pos]
+            original_probs = torch.softmax(logits[0], dim=-1)
+            
+            # Compute banned tokens with no max_length limit
+            banned_tokens = compute_prefix_banned_tokens(tokenizer, matched_lower)
+            
+            # Store original probabilities before adjustment
+            original_banned_probs = {token_id: original_probs[token_id].item() for token_id in banned_tokens}
+            
+            # Now adjust the probabilities
+            for token_id in banned_tokens:
+                self.probs_cache[start_pos][:, token_id] = 1e-10
+            
+            # Get new probabilities after adjustment
+            adjusted_probs = torch.softmax(self.probs_cache[start_pos][0], dim=-1)
+            top_probs, top_indices = torch.topk(adjusted_probs, k=5)
+            
+            debug_tokens = "\nTop 5 tokens for next position:"
+            for prob, idx in zip(top_probs.tolist(), top_indices.tolist()):
+                token_text = tokenizer.decode([idx])
+                debug_tokens += f"\n{token_text!r}: {prob:.8f}"
+            
+            # Add information about the banned tokens, showing before/after
+            debug_tokens += "\n\nBanned tokens (original → adjusted):"
+            for token_id in banned_tokens:
+                token_text = tokenizer.decode([token_id])
+                orig_prob = original_banned_probs[token_id]
+                new_prob = adjusted_probs[token_id].item()
+                debug_tokens += f"\n{token_text!r}: {orig_prob:.8f} → {new_prob:.8f}"
+
         # Decide whether to remove or keep the detected phrase.
         if random.random() < removal_probability:
             # Removal branch: update the cached logits, zeroing out all computed banned tokens.
@@ -165,24 +195,6 @@ class SlopPhraseHandler:
             removal_decision = f"Removal threshold met (random < {removal_probability:.2f}). Backtracking from token pos {start_pos}."
             print(removal_decision)
             self._display_debug(removal_decision)
-
-            # Get the probabilities BEFORE we delete the cache
-            if start_pos in self.probs_cache:
-                logits = self.probs_cache[start_pos]
-                probs = torch.softmax(logits[0], dim=-1)
-                top_probs, top_indices = torch.topk(probs, k=5)
-                
-                debug_tokens = "\nTop 5 tokens for next position:"
-                for prob, idx in zip(top_probs.tolist(), top_indices.tolist()):
-                    token_text = tokenizer.decode([idx])
-                    debug_tokens += f"\n{token_text!r}: {prob:.8f}"
-                
-                # Add information about the banned tokens
-                debug_tokens += "\n\nBanned tokens (adjusted to near-zero):"
-                for token_id in banned_tokens:
-                    token_text = tokenizer.decode([token_id])
-                    prob = probs[token_id].item()
-                    debug_tokens += f"\n{token_text!r}: {prob:.8f}"
 
             # Now do the backtracking and cache clearing
             for _ in range(len(generated_sequence) - start_pos):
