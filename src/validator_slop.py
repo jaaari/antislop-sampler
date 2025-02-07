@@ -175,7 +175,7 @@ class SlopPhraseHandler:
                 debug_tokens = "\nTop 5 tokens for next position:"
                 for prob, idx in zip(top_probs.tolist(), top_indices.tolist()):
                     token_text = tokenizer.decode([idx])
-                    debug_tokens += f"\n{token_text!r}: {prob:.4f}"
+                    debug_tokens += f"\n{token_text!r}: {prob:.8f}"
 
             # Now do the backtracking and cache clearing
             for _ in range(len(generated_sequence) - start_pos):
