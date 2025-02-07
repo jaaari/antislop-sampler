@@ -21,10 +21,15 @@ def detect_disallowed_sequence(tokenizer: PreTrainedTokenizer,
                                 slop_phrase_prob_adjustments: Dict[str, float], 
                                 max_slop_phrase_length: int,
                                 min_slop_phrase_length: int,
-                                check_n_chars_back: int = 16 # this moves the detection window back n chars, so we can detect phrases that were completed further back
-                                ) -> Tuple[Tuple[int, ...] | None, int]:
-    
+                                check_n_chars_back: int = 16,
+                                min_index: int = None) -> Tuple[Tuple[int, ...] | None, int]:
+    """
+    Checks the given decoded inference for a slop phrase.
+    Only tokens with index >= min_index (defaulting to prompt_length) are considered.
+    """
     inference = inference.lower()
+    if min_index is None:
+        min_index = prompt_length
 
     for char_offset in range(0, check_n_chars_back):
         for candidate_str_length in range(max_slop_phrase_length, min_slop_phrase_length - 1, -1):
@@ -33,9 +38,8 @@ def detect_disallowed_sequence(tokenizer: PreTrainedTokenizer,
             candidate_str = inference[-(candidate_str_length + char_offset):len(inference)-char_offset]
             #print(candidate_str)
             if candidate_str in slop_phrase_prob_adjustments:
-                # determine the token containing the beginning of the detected phrase
-                #print('looking for', candidate_str,'in decoded text')
-                for start_pos in range(len(generated_sequence)-1, prompt_length-1, -1):
+                # Only check positions not earlier than min_index.
+                for start_pos in range(len(generated_sequence)-1, min_index-1, -1):
                     candidate_seq = generated_sequence[start_pos:]
                     candidate_seq_decoded = tokenizer.decode(candidate_seq, skip_special_tokens=True).lower()
                     #print(candidate_seq_decoded)
@@ -83,6 +87,9 @@ class SlopPhraseHandler:
 
         self.last_detection_end = -1  # or some sentinel
         self.ignored_positions = set()  # store token indices that we "accepted"
+        
+        # New attribute: index of tokens we consider "safe" (i.e. already accepted)
+        self.ignore_until = None
 
     def _handle_disallowed_sequence(
         self,
@@ -99,13 +106,8 @@ class SlopPhraseHandler:
         prompt_length: int,
     ) -> List[int]:
         """
-        Handles a detected disallowed sequence by downregulating or removing it from the generated_sequence.
-        In this version, we compute a removal probability based on:
-          removal_probability = min(1.0, (1 + frequency) * adjustment_strength)
-        The frequency is taken from the slop_phrase_prob_adjustments (typically very small),
-        so for example a frequency of 0.03125 and strength 50 results in ~52% chance.
+        Either backtracks to remove a slop phrase or (if kept) simply updates the safe-check index.
         """
-        # Build some context for logging.
         full_inference = tokenizer.decode(generated_sequence[prompt_length:], skip_special_tokens=True)
         matched_lower = matched_phrase.lower()
         idx = full_inference.lower().find(matched_lower)
@@ -123,35 +125,31 @@ class SlopPhraseHandler:
         detection_message = (
             f"[SlopDetector] Matched disallowed phrase:\n"
             f"'{short_context}'\n"
-            "Initiating probability downregulation..."
+            "Initiating probability adjustment..."
         )
         print(detection_message)
         self._display_debug(detection_message)
 
-        # Retrieve the frequency from our slop_phrase_prob_adjustments.
-        # (Our JSON stores entries like ["testament", 0.03125])
+        # Retrieve the frequency from our slop phrase db.
         frequency = self.slop_phrase_prob_adjustments[matched_lower]
-        # Compute the removal chance:
         removal_probability = min(1.0, (1.0 + frequency) * adjustment_strength)
         debug_msg = f"Computed removal_probability for '{matched_phrase}': {removal_probability:.2f}"
         print(debug_msg)
         self._display_debug(debug_msg)
 
-        # Identify all tokens we plan to adjust.
-        slop_phrase_starting_token = generated_sequence[start_pos]
         starting_tokens = self.starting_tokens_lookup.get(matched_lower, set())
+        # Include the token at the start position in the starting set.
+        slop_phrase_starting_token = generated_sequence[start_pos]
         starting_tokens.add(slop_phrase_starting_token)
 
-        # Decide whether to strongly remove (i.e. backtrack) or only mildly downregulate.
         if random.random() < removal_probability:
-            # Strong removal: scale tokens in the starting set to near zero.
+            # Removal branch: force removal by setting tokens in the starting set to near zero.
             for token_id in starting_tokens:
                 if start_pos in self.probs_cache:
-                    self.probs_cache[start_pos][:, token_id] = 1e-10  # or outright 0
-            removal_decision = f"Threshold met (random < {removal_probability:.2f}). Backtracking from token pos {start_pos}."
+                    self.probs_cache[start_pos][:, token_id] = 1e-10
+            removal_decision = f"Removal threshold met (random < {removal_probability:.2f}). Backtracking from token pos {start_pos}."
             print(removal_decision)
             self._display_debug(removal_decision)
-            # Backtrack: remove tokens from start_pos onward.
             removed_tokens = generated_sequence[start_pos:]
             removed_text = tokenizer.decode(removed_tokens, skip_special_tokens=True)
             backtrack_message = f"Tokens from position {start_pos} onward have been removed. Removed text: '{removed_text}'"
@@ -159,30 +157,33 @@ class SlopPhraseHandler:
             self._display_debug(backtrack_message)
             for _ in range(len(generated_sequence) - start_pos):
                 generated_sequence.pop()
-            # Clear probabilities for positions >= start_pos.
             to_del = [key for key in self.probs_cache if key >= start_pos]
             for key in to_del:
                 del self.probs_cache[key]
+            # Update safe index after backtracking.
+            self.ignore_until = len(generated_sequence)
             return generated_sequence
         else:
-            # Mild downregulation: apply a less severe factor.
-            for token_id in starting_tokens:
-                if start_pos in self.probs_cache:
-                    self.probs_cache[start_pos][:, token_id] *= 0.95
-            mild_message = f"Threshold not met (random >= {removal_probability:.2f}). Keeping tokens with mild adjustment."
-            print(mild_message)
-            self._display_debug(mild_message)
-            # Mark this start_pos as "ignored" so we won't repeatedly detect the same root
-            self.ignored_positions.add(start_pos)
+            # Keep branch: do not nudge the model further.
+            # Compute how many tokens comprise the detected phrase.
+            phrase_token_count = len(tokenizer.encode(matched_phrase, add_special_tokens=False))
+            new_ignore_until = start_pos + phrase_token_count
+            self.ignore_until = max(self.ignore_until, new_ignore_until)
+            keep_message = f"Keep decision (random >= {removal_probability:.2f}). Keeping phrase '{matched_phrase}' and setting ignore_until to {self.ignore_until}."
+            print(keep_message)
+            self._display_debug(keep_message)
             return generated_sequence
 
     def deslop(self, generated_sequence: List[int], prompt_length: int, newly_added_count: int = 1):
-        # decode only the newly added portion (plus a small buffer)
+        # Initialize the ignore_until value (the safe token index) on first call.
+        if self.ignore_until is None:
+            self.ignore_until = prompt_length
+
+        # Decode only a tail of the sequence (as before)
         tail_tokens = generated_sequence[-(self.max_slop_phrase_length + newly_added_count + 5):]
         inference_tail = self.tokenizer.decode(tail_tokens, skip_special_tokens=True)
         
-        # Now search for the slop phrase in `inference_tail`. 
-        # If found, map its position back to the full `generated_sequence` index.
+        # Call detection—but only look for phrases starting after self.ignore_until.
         matched_phrase, start_pos = detect_disallowed_sequence(
             self.tokenizer,
             inference_tail,
@@ -191,38 +192,25 @@ class SlopPhraseHandler:
             self.slop_phrase_prob_adjustments,
             self.max_slop_phrase_length,
             self.min_slop_phrase_length,
+            check_n_chars_back=16,
+            min_index=self.ignore_until
         )
 
         if matched_phrase:
-            if start_pos in self.ignored_positions:
-                # We already decided to keep (mild-penalize) this exact start_pos, so skip re-handling it
-                return False
-
-            # If you forcibly remove or keep, update self.last_detection_end
-            self.last_detection_end = len(generated_sequence)
+            # (Optional: ensure ignore_until is at least this detected start)
+            self.ignore_until = max(self.ignore_until, start_pos)
             if self.slow_debug:
                 current_text = self.tokenizer.decode(generated_sequence[prompt_length:start_pos])
-                #print([current_text])
                 matched_phrase_to_display = self.tokenizer.decode(generated_sequence[start_pos:], skip_special_tokens=True)
-                #print([matched_phrase_to_display])
-                # Add HTML formatting to display the matched_phrase in red
                 highlighted_text = f"{current_text}<span style='color: red;'>{matched_phrase_to_display}</span>"
-                
-                with self.inference_output:
-                    self.inference_output.clear_output(wait=True)
-                    display(HTML(f"<div style='white-space: pre-wrap;'>{highlighted_text}</div>"))
-
-            # Display debug information
-            debug_info = f"Replacing '{matched_phrase}'"
+                if self.inference_output:
+                    with self.inference_output:
+                        self.inference_output.clear_output(wait=True)
+                        display(HTML(f"<div style='white-space: pre-wrap;'>{highlighted_text}</div>"))
+            debug_info = f"Detected slop phrase '{matched_phrase}' at position {start_pos}."
             self._display_debug(debug_info)
 
-            if self.slow_debug:
-                #time.sleep(self.debug_delay)
-                if self.debug_output:
-                    with self.debug_output:
-                        self.debug_output.clear_output(wait=True)                        
-
-            # Handle the disallowed sequence using SlopPhraseHandler
+            # Handle using our new binary decision approach.
             generated_sequence = self._handle_disallowed_sequence(
                 matched_phrase=matched_phrase,
                 start_pos=start_pos,
