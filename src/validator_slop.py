@@ -22,7 +22,7 @@ def detect_disallowed_sequence(tokenizer: PreTrainedTokenizer,
                                 max_slop_phrase_length: int,
                                 min_slop_phrase_length: int,
                                 check_n_chars_back: int = 16 # this moves the detection window back n chars, so we can detect phrases that were completed further back
-                                ) -> Tuple[Tuple[int, ...], int]:
+                                ) -> Tuple[Tuple[int, ...] | None, int]:
     
     inference = inference.lower()
 
@@ -82,6 +82,7 @@ class SlopPhraseHandler:
         self.slop_phrase_prob_adjustments = tmp
 
         self.last_detection_end = -1  # or some sentinel
+        self.ignored_positions = set()  # store token indices that we "accepted"
 
     def _handle_disallowed_sequence(
         self,
@@ -129,7 +130,7 @@ class SlopPhraseHandler:
 
         # Retrieve the frequency from our slop_phrase_prob_adjustments.
         # (Our JSON stores entries like ["testament", 0.03125])
-        frequency = self.slop_phrase_prob_adjustments[matched_phrase.lower()]
+        frequency = self.slop_phrase_prob_adjustments[matched_lower]
         # Compute the removal chance:
         removal_probability = min(1.0, (1.0 + frequency) * adjustment_strength)
         debug_msg = f"Computed removal_probability for '{matched_phrase}': {removal_probability:.2f}"
@@ -138,7 +139,7 @@ class SlopPhraseHandler:
 
         # Identify all tokens we plan to adjust.
         slop_phrase_starting_token = generated_sequence[start_pos]
-        starting_tokens = self.starting_tokens_lookup.get(matched_phrase.lower(), set())
+        starting_tokens = self.starting_tokens_lookup.get(matched_lower, set())
         starting_tokens.add(slop_phrase_starting_token)
 
         # Decide whether to strongly remove (i.e. backtrack) or only mildly downregulate.
@@ -171,6 +172,8 @@ class SlopPhraseHandler:
             mild_message = f"Threshold not met (random >= {removal_probability:.2f}). Keeping tokens with mild adjustment."
             print(mild_message)
             self._display_debug(mild_message)
+            # Mark this start_pos as "ignored" so we won't repeatedly detect the same root
+            self.ignored_positions.add(start_pos)
             return generated_sequence
 
     def deslop(self, generated_sequence: List[int], prompt_length: int, newly_added_count: int = 1):
@@ -191,6 +194,10 @@ class SlopPhraseHandler:
         )
 
         if matched_phrase:
+            if start_pos in self.ignored_positions:
+                # We already decided to keep (mild-penalize) this exact start_pos, so skip re-handling it
+                return False
+
             # If you forcibly remove or keep, update self.last_detection_end
             self.last_detection_end = len(generated_sequence)
             if self.slow_debug:
