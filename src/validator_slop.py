@@ -173,19 +173,16 @@ class SlopPhraseHandler:
             self._display_debug(mild_message)
             return generated_sequence
 
-    def deslop(self, generated_sequence: List[int], prompt_length: int):
-        # If we've not advanced beyond the last detection end, skip checking
-        if len(generated_sequence) <= self.last_detection_end:
-            return False
-
-        inference = self.tokenizer.decode(
-            generated_sequence[prompt_length:], 
-            skip_special_tokens=True
-        )
-
+    def deslop(self, generated_sequence: List[int], prompt_length: int, newly_added_count: int = 1):
+        # decode only the newly added portion (plus a small buffer)
+        tail_tokens = generated_sequence[-(self.max_slop_phrase_length + newly_added_count + 5):]
+        inference_tail = self.tokenizer.decode(tail_tokens, skip_special_tokens=True)
+        
+        # Now search for the slop phrase in `inference_tail`. 
+        # If found, map its position back to the full `generated_sequence` index.
         matched_phrase, start_pos = detect_disallowed_sequence(
             self.tokenizer,
-            inference,
+            inference_tail,
             generated_sequence,
             prompt_length,
             self.slop_phrase_prob_adjustments,
