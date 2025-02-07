@@ -18,6 +18,9 @@ from src.validator_regex import RegexValidator, RegexValidationStoppingCriteria
 
 from src.util import precompute_starting_tokens
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AntiSlopSampler:
     def __init__(
@@ -98,9 +101,6 @@ class AntiSlopSampler:
             self.regex_validator = None
 
         self.streamer_retval = None
-
-        # Add logging counter
-        self.slop_hits = {}  # Track number of hits per phrase
 
     def _generate_streaming(self, current_input_ids, new_toks_to_generate, temperature, min_p, top_k, top_p, pad_token_id, stopping_criteria_args):
         streamer = TextIteratorStreamer(self.tokenizer, skip_special_tokens=False)
@@ -419,6 +419,13 @@ class AntiSlopSampler:
                 if self.antislop_enabled:
                     antislop_result = self.slop_phrase_handler.deslop(generated_sequence, self.prompt_length)
                     if antislop_result != False:
+                        # Figure out which tokens got removed to revert the sequence
+                        removed_tokens = generated_sequence[len(antislop_result):]
+                        if removed_tokens:
+                            # Convert the removed tokens to a string for easier reading
+                            removed_text = self.tokenizer.decode(removed_tokens, skip_special_tokens=True)
+                            logger.info(f"[AntiSlop] Slop phrase triggered. Removed: '{removed_text}'")
+
                         generated_sequence = antislop_result
                         current_position = len(generated_sequence)
                         continue
@@ -427,6 +434,11 @@ class AntiSlopSampler:
                 if self.regex_validator:
                     regex_result = self.regex_validator.validate_regex_matches(generated_sequence, self.prompt_length, self.probs_cache)
                     if regex_result != False:
+                        removed_tokens = generated_sequence[len(regex_result):]
+                        if removed_tokens:
+                            removed_text = self.tokenizer.decode(removed_tokens, skip_special_tokens=True)
+                            logger.info(f"[RegexValidator] Banned pattern triggered. Removed: '{removed_text}'")
+
                         generated_sequence = regex_result
                         current_position = len(generated_sequence)
                         continue
@@ -456,16 +468,6 @@ class AntiSlopSampler:
     def _filter_probs(self, probs: torch.FloatTensor, top_k: int, top_p: float, min_p: float) -> torch.FloatTensor:
         # Make a copy of the probabilities to ensure we do not modify the original tensor
         probs = probs.clone()
-
-        # Log any slop adjustments that were applied
-        if hasattr(self, 'slop_phrase_handler') and self.slop_phrase_handler.last_adjusted_phrase:
-            phrase = self.slop_phrase_handler.last_adjusted_phrase
-            self.slop_hits[phrase] = self.slop_hits.get(phrase, 0) + 1
-            # Use print with flush=True to ensure immediate output
-            print(f"🚫 Slop detected: '{phrase}' (hit #{self.slop_hits[phrase]})", flush=True)
-            import sys
-            sys.stdout.flush()
-            self.slop_phrase_handler.last_adjusted_phrase = None  # Reset for next time
 
         # Apply min_p filtering
         if min_p is not None:
@@ -516,13 +518,6 @@ class AntiSlopSampler:
         return
     
     def cleanup(self):
-        # Print final slop statistics
-        if self.slop_hits:
-            print("\n=== Final Slop Statistics ===")
-            for phrase, count in self.slop_hits.items():
-                print(f"'{phrase}': {count} hits")
-            print("=========================\n")
-            
         # Clear the queue
         while not self.sequence_queue.empty():
             try:
@@ -664,8 +659,6 @@ def generate_antislop(
     """
     Wrapper function for generate_antislop that handles both streaming and non-streaming modes.
     """
-    print('generate_antislop')
-
     # Type checking and validation of input arguments
     if not isinstance(prompt, str):
         raise TypeError("prompt must be a string")
@@ -791,10 +784,10 @@ def _generate_antislop(
     slop_phrase_prob_adjustments: Dict[str, float] = None,
     adjustment_strength: float = 1.0,
     device: torch.device = torch.device('cuda'),
-    slow_debug: bool = False,
+    slow_debug: bool = False,  # Added slow_debug
     output_every_n_tokens: int = 1,
     debug_delay: float = 2.0,
-    inference_output: 'Output' = None,
+    inference_output: 'Output' = None,  # Assuming Output is defined elsewhere
     debug_output: 'Output' = None,
     streaming: bool = False,
     stream_smoothing: bool = True,
@@ -806,17 +799,6 @@ def _generate_antislop(
     Generates text while avoiding overrepresented phrases (slop).
     This function is now always a generator with temporal buffering.
     """
-    
-    if slop_phrase_prob_adjustments:
-        # Use print with flush=True to ensure immediate output
-        print("\n=== AntiSlop Configuration ===", flush=True)
-        print(f"Adjustment Strength: {adjustment_strength}", flush=True)
-        print("Monitored Phrases:", flush=True)
-        for phrase, adj in slop_phrase_prob_adjustments.items():
-            print(f"  '{phrase}': {adj}", flush=True)
-        print("=========================\n", flush=True)
-        import sys
-        sys.stdout.flush()
 
     if streaming and regex_bans:
         raise ValueError("Streaming is not supported when using regex patterns.")
@@ -953,16 +935,6 @@ def _generate_antislop(
                 time.sleep(0.02)  # Constant delay as per user's instruction
 
     finally:
-        # Get the statistics before cleanup
-        if antislop_enabled and sampler.slop_hits:
-            # Use print with flush=True to ensure immediate output
-            print("\n=== Final AntiSlop Statistics ===", flush=True)
-            for phrase, count in sampler.slop_hits.items():
-                print(f"'{phrase}': {count} hits", flush=True)
-            print("=========================\n", flush=True)
-            import sys
-            sys.stdout.flush()
-            
         # Stop the event loop
         loop.call_soon_threadsafe(loop.stop)
         # Wait for the thread to finish
