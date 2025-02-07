@@ -210,6 +210,7 @@ class AntiSlopSampler:
         Yields:
             Generator[List[int], None, None]: Yields generated token sequences.
         """        
+        print(f"generate_stream called with antislop_enabled={self.antislop_enabled}")
         try:
             # Encode the prompt
             input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
@@ -424,7 +425,7 @@ class AntiSlopSampler:
                         if removed_tokens:
                             # Convert the removed tokens to a string for easier reading
                             removed_text = self.tokenizer.decode(removed_tokens, skip_special_tokens=True)
-                            logger.info(f"[AntiSlop] Slop phrase triggered. Removed: '{removed_text}'")
+                            print(f"[AntiSlop] Slop phrase triggered. Removed: '{removed_text}'")
 
                         generated_sequence = antislop_result
                         current_position = len(generated_sequence)
@@ -437,7 +438,7 @@ class AntiSlopSampler:
                         removed_tokens = generated_sequence[len(regex_result):]
                         if removed_tokens:
                             removed_text = self.tokenizer.decode(removed_tokens, skip_special_tokens=True)
-                            logger.info(f"[RegexValidator] Banned pattern triggered. Removed: '{removed_text}'")
+                            print(f"[RegexValidator] Banned pattern triggered. Removed: '{removed_text}'")
 
                         generated_sequence = regex_result
                         current_position = len(generated_sequence)
@@ -659,6 +660,7 @@ def generate_antislop(
     """
     Wrapper function for generate_antislop that handles both streaming and non-streaming modes.
     """
+    print(f"generate_antislop called with antislop_enabled={antislop_enabled}")
     # Type checking and validation of input arguments
     if not isinstance(prompt, str):
         raise TypeError("prompt must be a string")
