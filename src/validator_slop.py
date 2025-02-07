@@ -156,21 +156,24 @@ class SlopPhraseHandler:
             logits = self.probs_cache[start_pos]
             original_probs = torch.softmax(logits[0], dim=-1)
             
-            # Compute banned tokens with no max_length limit
+            # Get the full token for the matched phrase
+            full_tokens = tokenizer.encode(matched_lower, add_special_tokens=False)
             banned_tokens = compute_prefix_banned_tokens(tokenizer, matched_lower)
+            banned_tokens.update(full_tokens)  # Add the full tokens to the banned set
             
             # Store original probabilities before adjustment
             original_banned_probs = {token_id: original_probs[token_id].item() for token_id in banned_tokens}
             
             # Now adjust the probabilities
+            adjusted_logits = logits.clone()  # Create a copy of the logits
             for token_id in banned_tokens:
-                self.probs_cache[start_pos][:, token_id] = 1e-10
+                adjusted_logits[:, token_id] = float('-inf')  # Set to negative infinity instead of 1e-10
             
             # Get new probabilities after adjustment
-            adjusted_probs = torch.softmax(self.probs_cache[start_pos][0], dim=-1)
+            adjusted_probs = torch.softmax(adjusted_logits[0], dim=-1)
             top_probs, top_indices = torch.topk(adjusted_probs, k=5)
             
-            debug_tokens = "\nTop 5 tokens for next position:"
+            debug_tokens = "\nTop 5 tokens for next position after adjustment:"
             for prob, idx in zip(top_probs.tolist(), top_indices.tolist()):
                 token_text = tokenizer.decode([idx])
                 debug_tokens += f"\n{token_text!r}: {prob:.8f}"
@@ -182,6 +185,9 @@ class SlopPhraseHandler:
                 orig_prob = original_banned_probs[token_id]
                 new_prob = adjusted_probs[token_id].item()
                 debug_tokens += f"\n{token_text!r}: {orig_prob:.8f} → {new_prob:.8f}"
+
+            # Update the cache with adjusted logits
+            self.probs_cache[start_pos] = adjusted_logits
 
         # Decide whether to remove or keep the detected phrase.
         if random.random() < removal_probability:
