@@ -177,6 +177,21 @@ class SlopPhraseHandler:
                 del self.probs_cache[key]
             # Update safe index after backtracking.
             self.ignore_until = len(generated_sequence)
+
+            # After backtracking, show top 5 tokens for the next position
+            if start_pos in self.probs_cache:
+                logits = self.probs_cache[start_pos]
+                probs = torch.softmax(logits[0], dim=-1)
+                top_probs, top_indices = torch.topk(probs, k=5)
+                
+                debug_tokens = "\nTop 5 tokens for next position:"
+                for prob, idx in zip(top_probs.tolist(), top_indices.tolist()):
+                    token_text = tokenizer.decode([idx])
+                    debug_tokens += f"\n{token_text!r}: {prob:.4f}"
+                
+                print(debug_tokens)
+                self._display_debug(debug_tokens)
+            
             return generated_sequence
         else:
             # Keep branch: update ignore_until, so future detections ignore up to this point.
