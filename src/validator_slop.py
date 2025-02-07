@@ -95,39 +95,111 @@ class SlopPhraseHandler:
         debug_output: Output,
         debug_delay: float,
     ) -> List[int]:
+        """
+        Handles a detected disallowed sequence by downregulating or removing it from the generated_sequence.
+        This updated version adds more descriptive logging and context around the matched phrase.
+        """
+
+        # Prepare context for logging: last 3 tokens + the matched token + next token (if available)
+        context_window_start = max(self.prompt_length, start_pos - 3)
+        context_window_end = min(len(generated_sequence), start_pos + len(matched_phrase.split()) + 1)
+        context_tokens = generated_sequence[context_window_start:context_window_end]
+        context_text = tokenizer.decode(context_tokens, skip_special_tokens=True)
+
+        # Show matched phrase in bold inside context
+        # (Basic approach: just replace the matched_phrase substring in the context with HTML bold markers)
+        # If your matched_phrase has special tokens or multiple subwords, you may want more robust logic
+        context_highlight = context_text.replace(matched_phrase, f"**{matched_phrase}**")
+
+        # Log the detection event
+        detection_message = (
+            f"[SlopDetector] Matched disallowed phrase:\n"
+            f"  Phrase: '{matched_phrase}'\n"
+            f"  Context around match: '{context_highlight}'\n\n"
+            f"Initiating probability downregulation..."
+        )
+        print(detection_message)
+        self._display_debug(detection_message)
+
         # Downregulate the relevant tokens at the start_pos
         adjustment = self.slop_phrase_prob_adjustments[matched_phrase.lower()]
 
-        # Display debug information
-        debug_info = f"Replacing '{matched_phrase}'"
-        self._display_debug(debug_info)
-        print(f"Replacing '{matched_phrase}'")
-
+        # If slow_debug is on, optionally pause
         if slow_debug:
             time.sleep(debug_delay)
-            if debug_output:
-                with debug_output:
-                    debug_output.clear_output(wait=True)                        
 
-        print('downregulating', [tokenizer.decode([generated_sequence[start_pos]])])
+        # Show top-5 predicted tokens (before downregulation) at start_pos, if we have them
+        # We'll only attempt this if that index is in self.probs_cache
+        if start_pos in self.probs_cache:
+            token_probs = self.probs_cache[start_pos]
+            # Top-5 predicted
+            top_values, top_indices = torch.topk(token_probs, 5, dim=1)
+
+            prob_debug_info = "[SlopDetector] Top-5 predicted token candidates before downregulation:\n"
+            for rank in range(5):
+                token_id = top_indices[0, rank].item()
+                token_str = tokenizer.decode([token_id], skip_special_tokens=True)
+                prob_val = top_values[0, rank].item()
+                prob_debug_info += f"  {rank+1}) '{token_str}' p={prob_val:.5f}\n"
+
+            self._display_debug(prob_debug_info)
+            print(prob_debug_info)
 
         # Identify starting tokens to downregulate
         slop_phrase_starting_token = generated_sequence[start_pos]
         starting_tokens = self.starting_tokens_lookup.get(matched_phrase.lower(), set())
         starting_tokens.add(slop_phrase_starting_token)
 
+        # Show exactly which tokens we plan to downregulate
+        downregulating_message = (
+            f"[SlopDetector] Downregulating the probability of these tokens: "
+            f"{', '.join([tokenizer.decode([t]) for t in starting_tokens])}\n"
+            f"  Downregulation factor: {adjustment}^{adjustment_strength}"
+        )
+        print(downregulating_message)
+        self._display_debug(downregulating_message)
+
+        # Downregulate the tokens
         for token_id in starting_tokens:
             self.probs_cache[start_pos][:, token_id] *= adjustment ** adjustment_strength
+
+        # Display top-5 again after we downregulate
+        if start_pos in self.probs_cache:
+            token_probs_after = self.probs_cache[start_pos]
+            # Top-5 predicted
+            top_values_after, top_indices_after = torch.topk(token_probs_after, 5, dim=1)
+
+            prob_debug_info_after = "[SlopDetector] Top-5 predicted token candidates after downregulation:\n"
+            for rank in range(5):
+                token_id = top_indices_after[0, rank].item()
+                token_str = tokenizer.decode([token_id], skip_special_tokens=True)
+                prob_val = top_values_after[0, rank].item()
+                prob_debug_info_after += f"  {rank+1}) '{token_str}' p={prob_val:.5f}\n"
+
+            self._display_debug(prob_debug_info_after)
+            print(prob_debug_info_after)
 
         # Check if the starting token would still be selected after downregulation
         if torch.argmax(self.probs_cache[start_pos]).item() == slop_phrase_starting_token:
             if slow_debug:
-                print(f"Slop phrase '{matched_phrase}' prob was downregulated {round(1/(adjustment**adjustment_strength), 2)}x but still selected.")
-                debug_info = f"Slop phrase '{matched_phrase}' prob was downregulated {round(1/(adjustment**adjustment_strength), 2)}x but still selected."
-                self._display_debug(debug_info)
+                still_selected_message = (
+                    f"[SlopDetector] The slop phrase '{matched_phrase}' was downregulated by "
+                    f"{round(1/(adjustment**adjustment_strength), 2)}x but is still selected!"
+                )
+                print(still_selected_message)
+                self._display_debug(still_selected_message)
             return generated_sequence
 
         # Backtrack: remove tokens from the generated_sequence that are part of the disallowed sequence
+        removed_tokens = generated_sequence[start_pos:]
+        removed_text = tokenizer.decode(removed_tokens, skip_special_tokens=True)
+        backtrack_message = (
+            f"[SlopDetector] Backtracking to remove disallowed sequence: '{removed_text}'\n"
+            f"Tokens from position {start_pos} onward have been removed."
+        )
+        print(backtrack_message)
+        self._display_debug(backtrack_message)
+
         for _ in range(len(generated_sequence) - start_pos):
             generated_sequence.pop()
 
