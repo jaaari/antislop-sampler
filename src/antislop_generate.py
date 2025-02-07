@@ -494,6 +494,11 @@ class AntiSlopSampler:
             )
             probs = probs.masked_fill(indices_to_remove, 0)
 
+        # Additional filtering: ban any token that has been flagged as forbidden.
+        if hasattr(self, "slop_phrase_handler") and self.slop_phrase_handler is not None:
+            for token_id in self.slop_phrase_handler.forbidden_starting_tokens:
+                probs[:, token_id] = 0
+
         return probs
 
     def _display_debug(self, message: str):
