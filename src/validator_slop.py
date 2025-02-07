@@ -81,7 +81,7 @@ class SlopPhraseHandler:
             tmp[key.lower()] = self.slop_phrase_prob_adjustments[key]
         self.slop_phrase_prob_adjustments = tmp
 
-    
+        self.last_detection_end = -1  # or some sentinel
 
     def _handle_disallowed_sequence(
         self,
@@ -99,7 +99,7 @@ class SlopPhraseHandler:
         """
         Handles a detected disallowed sequence by downregulating or removing it from the generated_sequence.
         In this version, we compute a removal probability based on:
-          removal_probability = min(1.0, (1 + frequency) * (adjustment_strength / 100))
+          removal_probability = min(1.0, (1 + frequency) * adjustment_strength)
         The frequency is taken from the slop_phrase_prob_adjustments (typically very small),
         so for example a frequency of 0.03125 and strength 50 results in ~52% chance.
         """
@@ -130,7 +130,7 @@ class SlopPhraseHandler:
         # (Our JSON stores entries like ["testament", 0.03125])
         frequency = self.slop_phrase_prob_adjustments[matched_phrase.lower()]
         # Compute the removal chance:
-        removal_probability = min(1.0, (1.0 + frequency) * (adjustment_strength / 100.0))
+        removal_probability = min(1.0, (1.0 + frequency) * adjustment_strength)
         debug_msg = f"Computed removal_probability for '{matched_phrase}': {removal_probability:.2f}"
         print(debug_msg)
         self._display_debug(debug_msg)
@@ -173,10 +173,14 @@ class SlopPhraseHandler:
             return generated_sequence
 
     def deslop(self, generated_sequence, prompt_length):
-        self.prompt_length = prompt_length
-        # After adding the token(s), check for disallowed sequences
+        # If we've not advanced beyond the last detection end, skip checking
+        if len(generated_sequence) <= self.last_detection_end:
+            return False
 
-        inference = self.tokenizer.decode(generated_sequence[prompt_length:], skip_special_tokens=True)
+        inference = self.tokenizer.decode(
+            generated_sequence[prompt_length:], 
+            skip_special_tokens=True
+        )
 
         matched_phrase, start_pos = detect_disallowed_sequence(self.tokenizer,
                                                                inference,
@@ -187,6 +191,8 @@ class SlopPhraseHandler:
                                                                self.min_slop_phrase_length)
 
         if matched_phrase:
+            # If you forcibly remove or keep, update self.last_detection_end
+            self.last_detection_end = len(generated_sequence)
             if self.slow_debug:
                 current_text = self.tokenizer.decode(generated_sequence[prompt_length:start_pos])
                 #print([current_text])
