@@ -168,18 +168,38 @@ class SlopPhraseHandler:
             logits = self.probs_cache[start_pos]
             original_probs = torch.softmax(logits[0], dim=-1)
             
-            # Get ALL possible substrings as banned tokens
+            # Get ALL possible substrings as banned tokens (prefix-style)
             banned_tokens = compute_prefix_banned_tokens(tokenizer, matched_lower)
             
-            # Store original probabilities before adjustment
+            # Store original probabilities for those tokens
             original_banned_probs = {token_id: original_probs[token_id].item() for token_id in banned_tokens}
             
-            # Now adjust the probabilities
-            adjusted_logits = logits.clone()  # Create a copy of the logits
-            for token_id in banned_tokens:
-                adjusted_logits[:, token_id] = float('-inf')  # Set to negative infinity
+            # Create a copy of logits for modifications
+            adjusted_logits = logits.clone()
             
-            # Get new probabilities after adjustment
+            # 1) Ban tokens that match any prefix of the phrase
+            for token_id in banned_tokens:
+                adjusted_logits[:, token_id] = float('-inf')
+
+            # 2) Ban tokens that *contain* the matched_phrase (e.g., "orchestra" inside "orchestrated")
+            #    We do it for all vocab to ensure partial matches don't slip through.
+            vocab_size = adjusted_logits.shape[-1]
+            containing_banned_tokens = []
+            for token_id in range(vocab_size):
+                # Skip already-banned tokens
+                if adjusted_logits[0, token_id] == float('-inf'):
+                    continue
+                token_text = tokenizer.decode([token_id]).lower()
+                if matched_lower in token_text:
+                    containing_banned_tokens.append(token_id)
+                    adjusted_logits[0, token_id] = float('-inf')
+
+            # For debug output, compile original probabilities for newly banned tokens
+            original_containing_banned_probs = {
+                t_id: original_probs[t_id].item() for t_id in containing_banned_tokens
+            }
+
+            # Now get new probabilities after adjustments
             adjusted_probs = torch.softmax(adjusted_logits[0], dim=-1)
             top_probs, top_indices = torch.topk(adjusted_probs, k=5)
             
@@ -188,46 +208,59 @@ class SlopPhraseHandler:
                 token_text = tokenizer.decode([idx])
                 debug_tokens += f"\n{token_text!r}: {prob:.8f}"
             
-            # Add information about the banned tokens, showing before/after
             debug_tokens += "\n\nBanned tokens (original → adjusted):"
+            # Show prefix-banned tokens
             for token_id in banned_tokens:
                 token_text = tokenizer.decode([token_id])
                 orig_prob = original_banned_probs[token_id]
                 new_prob = adjusted_probs[token_id].item()
-                debug_tokens += f"\n{token_text!r}: {orig_prob:.8f} → {new_prob:.8f} (id: {token_id})"
+                debug_tokens += (
+                    f"\n{token_text!r}: {orig_prob:.8f} → {new_prob:.8f} (id: {token_id})"
+                )
+            # Show contain-banned tokens
+            for token_id in containing_banned_tokens:
+                token_text = tokenizer.decode([token_id])
+                orig_prob = original_containing_banned_probs[token_id]
+                new_prob = adjusted_probs[token_id].item()
+                debug_tokens += (
+                    f"\n{token_text!r}: {orig_prob:.8f} → {new_prob:.8f} (id: {token_id})"
+                )
 
             # Update the cache with adjusted logits
             self.probs_cache[start_pos] = adjusted_logits
 
         # Decide whether to remove or keep the detected phrase.
         if random.random() < removal_probability:
-            # Removal branch: update the cached logits, zeroing out all computed banned tokens.
-            for token_id in banned_tokens:
-                if start_pos in self.probs_cache:
-                    # Setting near-zero probability for the banned token at the backtracking point.
-                    self.probs_cache[start_pos][:, token_id] = float('-inf')  # Changed from 1e-10 to -inf
-            # Update the global forbidden_tokens list
-            self.forbidden_starting_tokens.update(banned_tokens)
+            # Removal branch: zero out probabilities for newly banned tokens,
+            # backtrack and remove everything from start_pos onward.
+            if start_pos in self.probs_cache:
+                # Setting near-zero probability for the banned tokens
+                if 'banned_tokens' in locals():
+                    for token_id in banned_tokens:
+                        self.probs_cache[start_pos][:, token_id] = float('-inf')
+                if 'containing_banned_tokens' in locals():
+                    for token_id in containing_banned_tokens:
+                        self.probs_cache[start_pos][:, token_id] = float('-inf')
+                self.forbidden_starting_tokens.update(banned_tokens)
+                self.forbidden_starting_tokens.update(containing_banned_tokens)
+
             removal_decision = f"Removal threshold met (random < {removal_probability:.2f}). Backtracking from token pos {start_pos}."
             print(removal_decision)
             self._display_debug(removal_decision)
 
-            # Now do the backtracking and cache clearing
             original_length = len(generated_sequence)
             for _ in range(len(generated_sequence) - start_pos):
                 generated_sequence.pop()
             to_del = [key for key in self.probs_cache if key >= start_pos]
             for key in to_del:
                 del self.probs_cache[key]
-            # Update safe index after backtracking.
+
             self.ignore_until = len(generated_sequence)
 
-            # Print the debug tokens after backtracking
             if 'debug_tokens' in locals():
                 print(debug_tokens)
                 self._display_debug(debug_tokens)
             
-            # Log the sequence state after backtracking
             backtrack_msg = (
                 f"\nBacktracking summary:"
                 f"\nOriginal sequence length: {original_length}"
@@ -238,11 +271,10 @@ class SlopPhraseHandler:
             print(backtrack_msg)
             self._display_debug(backtrack_msg)
 
-            # Get the next token that will be generated (if available in probs_cache)
+            # Show possible next tokens if available
             if start_pos in self.probs_cache:
                 logits = self.probs_cache[start_pos]
                 next_probs = torch.softmax(logits[0], dim=-1)
-                # Get top 5 possible next tokens
                 top_probs, top_indices = torch.topk(next_probs, k=5)
                 next_tokens_msg = "\nPossible next tokens after backtracking:"
                 for prob, idx in zip(top_probs.tolist(), top_indices.tolist()):
@@ -251,17 +283,19 @@ class SlopPhraseHandler:
                 print(next_tokens_msg)
                 self._display_debug(next_tokens_msg)
             
-            # Set flag to check next token on next call
             self.waiting_for_next_token = True
             self.last_backtrack_pos = start_pos
             
             return generated_sequence
         else:
-            # Keep branch: update ignore_until, so future detections ignore up to this point.
+            # Keep branch: update ignore_until so future detections ignore up to this point.
             phrase_token_count = len(tokenizer.encode(matched_phrase, add_special_tokens=False))
             new_ignore_until = start_pos + phrase_token_count
             self.ignore_until = max(self.ignore_until, new_ignore_until)
-            keep_message = f"Keep decision (random >= {removal_probability:.2f}). Keeping phrase '{matched_phrase}' and setting ignore_until to {self.ignore_until}."
+            keep_message = (
+                f"Keep decision (random >= {removal_probability:.2f}). Keeping phrase '{matched_phrase}' "
+                f"and setting ignore_until to {self.ignore_until}."
+            )
             print(keep_message)
             self._display_debug(keep_message)
             return generated_sequence
