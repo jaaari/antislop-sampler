@@ -87,10 +87,11 @@ class Predictor(BasePredictor):
             description="List of [phrase, adjustment] pairs for slop control. Example: [[\"a testament to\", \"0.3\"], [\"tapestry of\", \"0.1\"]]",
             default=None
         ),
-        adjustment_strength: float = Input(
-            description="Strength of slop adjustments",
-            default=20.0,
-            ge=0.0
+        removal_factor: float = Input(
+            description="Chance of removal factor for slop control (from 0 to 1). Controls the overall probability that a slop phrase triggers removal.",
+            default=0.5,
+            ge=0.0,
+            le=1.0
         ),
         antislop_enabled: bool = Input(
             description="Enable AntiSlop functionality",
@@ -131,11 +132,12 @@ class Predictor(BasePredictor):
             "regex_bans": regex_bans
         }
         
-        # Only add min_p if antislop is enabled
+        # Only add min_p and slop parameters if antislop is enabled
         if antislop_enabled:
             generation_kwargs["min_p"] = min_p
             generation_kwargs["slop_phrase_prob_adjustments"] = slop_adjustments
-            generation_kwargs["adjustment_strength"] = adjustment_strength
+            # Pass the new removal_factor (a value between 0 and 1)
+            generation_kwargs["adjustment_strength"] = removal_factor
 
         # Generate text using AntiSlop
         generated_tokens = generate_antislop(**generation_kwargs)

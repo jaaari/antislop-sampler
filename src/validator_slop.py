@@ -98,31 +98,26 @@ class SlopPhraseHandler:
     ) -> List[int]:
         """
         Handles a detected disallowed sequence by downregulating or removing it from the generated_sequence.
-        This version has a tighter, shorter logging format matching the user's requested style.
+        In this version, we compute a removal probability based on:
+          removal_probability = min(1.0, (1 + frequency) * (adjustment_strength / 100))
+        The frequency is taken from the slop_phrase_prob_adjustments (typically very small),
+        so for example a frequency of 0.03125 and strength 50 results in ~52% chance.
         """
-
-        # We'll gather some text context. Let's take ~15 characters before & after:
-        # so you can see a bit more around the flagged word, then bracket it.
+        # Build some context for logging.
         full_inference = tokenizer.decode(generated_sequence[self.prompt_length:], skip_special_tokens=True)
-        # Lowercase check to find the matched phrase index
         matched_lower = matched_phrase.lower()
-        # Where in the full_inference does the matched_phrase appear?
         idx = full_inference.lower().find(matched_lower)
         context_buffer = 15
 
-        # If found, bracket it; otherwise just show the entire text
         if idx >= 0:
             context_start = max(0, idx - context_buffer)
             context_end = min(len(full_inference), idx + len(matched_phrase) + context_buffer)
             prefix = full_inference[context_start:idx]
             suffix = full_inference[idx + len(matched_phrase):context_end]
-            # Insert brackets around the matched phrase
             short_context = f"{prefix}[{matched_phrase}]{suffix}"
         else:
-            # fallback if something unexpected: entire text
             short_context = full_inference
 
-        # Log the detection event
         detection_message = (
             f"[SlopDetector] Matched disallowed phrase:\n"
             f"'{short_context}'\n"
@@ -131,82 +126,51 @@ class SlopPhraseHandler:
         print(detection_message)
         self._display_debug(detection_message)
 
-        # Instead of applying exponentiation, we now interpret the adjustment factor
-        # as a percentage removal chance.
-        removal_probability = self.slop_phrase_prob_adjustments[matched_phrase.lower()] / 100.0
+        # Retrieve the frequency from our slop_phrase_prob_adjustments.
+        # (Our JSON stores entries like ["testament", 0.03125])
+        frequency = self.slop_phrase_prob_adjustments[matched_phrase.lower()]
+        # Compute the removal chance:
+        removal_probability = min(1.0, (1.0 + frequency) * (adjustment_strength / 100.0))
+        debug_msg = f"Computed removal_probability for '{matched_phrase}': {removal_probability:.2f}"
+        print(debug_msg)
+        self._display_debug(debug_msg)
 
-        # Identify all tokens we plan to downregulate
+        # Identify all tokens we plan to adjust.
         slop_phrase_starting_token = generated_sequence[start_pos]
         starting_tokens = self.starting_tokens_lookup.get(matched_phrase.lower(), set())
         starting_tokens.add(slop_phrase_starting_token)
 
-        for token_id in starting_tokens:
-            if start_pos in self.probs_cache:
-                # Get old probability for logging (if needed)
-                p_old = self.probs_cache[start_pos][0, token_id].item()
-                # Apply probabilistic downregulation
-                if random.random() < removal_probability:
-                    # Strong removal into near-zero probability
+        # Decide whether to strongly remove (i.e. backtrack) or only mildly downregulate.
+        if random.random() < removal_probability:
+            # Strong removal: scale tokens in the starting set to near zero.
+            for token_id in starting_tokens:
+                if start_pos in self.probs_cache:
                     self.probs_cache[start_pos][:, token_id] *= 0.01
-                else:
-                    # Otherwise, apply a smaller reduction
-                    self.probs_cache[start_pos][:, token_id] *= 0.95
-            else:
-                # If not in probs_cache, we can't do anything
-                pass
-
-        # Print one line with "Slop after regulating"
-        # If we have matched_token_newprob data:
-        if start_pos in self.probs_cache:
-            token_str = tokenizer.decode([slop_phrase_starting_token], skip_special_tokens=True)
-            p_old_float = p_old
-            p_new_float = self.probs_cache[start_pos][0, slop_phrase_starting_token].item()
-            # We also have the factor = adjustment^adjustment_strength
-            factor_str = f"{removal_probability:.2f}"
-            # Rank or blank
-            rank_prefix = ""
-            # E.g. "4) 'symphony' p=0.03125^20.0=0.00000"
-            slop_after_line = f"{rank_prefix}'{token_str}' p={factor_str}={p_new_float:.5g}"
+            removal_decision = f"Threshold met (random < {removal_probability:.2f}). Backtracking from token pos {start_pos}."
+            print(removal_decision)
+            self._display_debug(removal_decision)
+            # Backtrack: remove tokens from start_pos onward.
+            removed_tokens = generated_sequence[start_pos:]
+            removed_text = tokenizer.decode(removed_tokens, skip_special_tokens=True)
+            backtrack_message = f"Tokens from position {start_pos} onward have been removed. Removed text: '{removed_text}'"
+            print(backtrack_message)
+            self._display_debug(backtrack_message)
+            for _ in range(len(generated_sequence) - start_pos):
+                generated_sequence.pop()
+            # Clear probabilities for positions >= start_pos.
+            to_del = [key for key in self.probs_cache if key >= start_pos]
+            for key in to_del:
+                del self.probs_cache[key]
+            return generated_sequence
         else:
-            # fallback
-            slop_after_line = f"'{matched_phrase}' p={removal_probability:.2f}"
-
-        after_regulation_msg = (
-            "[SlopDetector] Slop after regulating:\n" f"{slop_after_line}"
-        )
-        print(after_regulation_msg)
-        self._display_debug(after_regulation_msg)
-
-        # Check if the starting token is still #1 after downregulation
-        if start_pos in self.probs_cache:
-            new_argmax = torch.argmax(self.probs_cache[start_pos], dim=1).item()
-            if new_argmax == slop_phrase_starting_token and slow_debug:
-                still_selected_message = (
-                    f"[SlopDetector] The slop phrase '{matched_phrase}' was downregulated but is still selected!"
-                )
-                print(still_selected_message)
-                self._display_debug(still_selected_message)
-                return generated_sequence
-
-        # If we get here, we backtrack
-        removed_tokens = generated_sequence[start_pos:]
-        removed_text = tokenizer.decode(removed_tokens, skip_special_tokens=True)
-        backtrack_message = (
-            f"Tokens from position {start_pos} onward have been removed."
-        )
-        print(backtrack_message)
-        self._display_debug(backtrack_message)
-
-        # Actually remove them
-        for _ in range(len(generated_sequence) - start_pos):
-            generated_sequence.pop()
-
-        # Clear the probs_cache for positions after start_pos
-        to_del = [key for key in self.probs_cache if key > start_pos]
-        for key in to_del:
-            del self.probs_cache[key]
-
-        return generated_sequence
+            # Mild downregulation: apply a less severe factor.
+            for token_id in starting_tokens:
+                if start_pos in self.probs_cache:
+                    self.probs_cache[start_pos][:, token_id] *= 0.95
+            mild_message = f"Threshold not met (random >= {removal_probability:.2f}). Keeping tokens with mild adjustment."
+            print(mild_message)
+            self._display_debug(mild_message)
+            return generated_sequence
 
     def deslop(self, generated_sequence, prompt_length):
         self.prompt_length = prompt_length
