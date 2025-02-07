@@ -6,6 +6,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from typing import List, Dict
 from src.antislop_generate import generate_antislop
+import json
 
 
 class Predictor(BasePredictor):
@@ -16,6 +17,15 @@ class Predictor(BasePredictor):
         
         # Model path - using local files
         model_path = "./gemma_model"
+        
+        # Load default slop adjustments
+        slop_adjustments_file = "./slop_phrase_prob_adjustments.json"
+        try:
+            with open(slop_adjustments_file, 'r', encoding='utf-8') as f:
+                self.default_slop_adjustments = dict(json.load(f))
+        except Exception as e:
+            print(f"Warning: Could not load slop adjustments file: {e}")
+            self.default_slop_adjustments = {}
         
         # Load tokenizer with trust_remote_code for newer models
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -97,13 +107,13 @@ class Predictor(BasePredictor):
     ) -> str:
         """Run a single prediction on the model"""
         
-        # Convert slop_phrases to dictionary if provided
-        slop_adjustments = None
+        # Start with default slop adjustments
+        slop_adjustments = self.default_slop_adjustments.copy()
+
+        # Update with any additional slop phrases provided
         if slop_phrases:
-            slop_adjustments = {
-                phrase: float(adjustment) 
-                for phrase, adjustment in slop_phrases
-            }
+            for phrase, adjustment in slop_phrases:
+                slop_adjustments[phrase] = float(adjustment)
 
         # Generate text using AntiSlop
         generation_kwargs = {
