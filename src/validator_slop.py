@@ -101,6 +101,7 @@ class SlopPhraseHandler:
         # Display debug information
         debug_info = f"Replacing '{matched_phrase}'"
         self._display_debug(debug_info)
+        print(f"Replacing '{matched_phrase}'")
 
         if slow_debug:
             time.sleep(debug_delay)
@@ -108,7 +109,7 @@ class SlopPhraseHandler:
                 with debug_output:
                     debug_output.clear_output(wait=True)                        
 
-        #print('downregulating', [tokenizer.decode([generated_sequence[start_pos]])])
+        print('downregulating', [tokenizer.decode([generated_sequence[start_pos]])])
 
         # Identify starting tokens to downregulate
         slop_phrase_starting_token = generated_sequence[start_pos]
@@ -121,6 +122,7 @@ class SlopPhraseHandler:
         # Check if the starting token would still be selected after downregulation
         if torch.argmax(self.probs_cache[start_pos]).item() == slop_phrase_starting_token:
             if slow_debug:
+                print(f"Slop phrase '{matched_phrase}' prob was downregulated {round(1/(adjustment**adjustment_strength), 2)}x but still selected.")
                 debug_info = f"Slop phrase '{matched_phrase}' prob was downregulated {round(1/(adjustment**adjustment_strength), 2)}x but still selected."
                 self._display_debug(debug_info)
             return generated_sequence
