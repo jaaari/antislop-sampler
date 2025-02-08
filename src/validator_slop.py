@@ -301,25 +301,28 @@ class SlopPhraseHandler:
             return generated_sequence
 
     def deslop(self, generated_sequence: List[int], prompt_length: int, newly_added_count: int = 1):
-        # At the start, check if we were waiting for a next token
+        # If we previously backtracked and are waiting for the next token, show what that token actually became
         if self.waiting_for_next_token and len(generated_sequence) > self.last_backtrack_pos:
             next_token = generated_sequence[self.last_backtrack_pos]
             next_token_text = self.tokenizer.decode([next_token])
-            next_token_msg = f"\nActual token chosen after backtrack: {next_token_text!r} (id: {next_token})"
+            
+            # This print ensures we see the actual token and its ID that was picked right after backtracking
+            next_token_msg = f"\n[SlopPhraseHandler] Actual token chosen after backtrack: {next_token_text!r} (id: {next_token})"
             print(next_token_msg)
             self._display_debug(next_token_msg)
+
+            # Reset the flags now that we've seen the new token.
             self.waiting_for_next_token = False
             self.last_backtrack_pos = None
 
-        # Initialize the ignore_until value (the safe token index) on first call.
+        # Initialize ignore_until on first call if needed
         if self.ignore_until is None:
             self.ignore_until = prompt_length
 
-        # Decode only a tail of the sequence (as before)
+        # As before, decode just the tail to check slop phrases
         tail_tokens = generated_sequence[-(self.max_slop_phrase_length + newly_added_count + 5):]
         inference_tail = self.tokenizer.decode(tail_tokens, skip_special_tokens=True)
-        
-        # Call detection—but only look for phrases starting after self.ignore_until.
+
         matched_phrase, start_pos = detect_disallowed_sequence(
             self.tokenizer,
             inference_tail,
@@ -333,7 +336,6 @@ class SlopPhraseHandler:
         )
 
         if matched_phrase:
-            # (Optional: ensure ignore_until is at least this detected start)
             self.ignore_until = max(self.ignore_until, start_pos)
             if self.slow_debug:
                 current_text = self.tokenizer.decode(generated_sequence[prompt_length:start_pos])
@@ -346,7 +348,7 @@ class SlopPhraseHandler:
             debug_info = f"Detected slop phrase '{matched_phrase}' at position {start_pos}."
             self._display_debug(debug_info)
 
-            # Handle using our new binary decision approach.
+            # Handle disallowed sequence
             generated_sequence = self._handle_disallowed_sequence(
                 matched_phrase=matched_phrase,
                 start_pos=start_pos,
@@ -362,6 +364,7 @@ class SlopPhraseHandler:
             )
 
             return generated_sequence
+
         return False
 
     def _display_debug(self, message: str):
