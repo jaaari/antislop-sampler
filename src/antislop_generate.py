@@ -8,13 +8,15 @@ from transformers import (
     PreTrainedTokenizer,
     PreTrainedModel,
     StoppingCriteriaList,
-    TextIteratorStreamer
+    TextIteratorStreamer,
+    LogitsProcessorList
 )
 from IPython.display import display, HTML
 from ipywidgets import Output
 from src.validator_slop import SlopPhraseHandler, CustomSlopPhraseStoppingCriteria
 from src.validator_json import JSONValidator, JSONValidationStoppingCriteria
 from src.validator_regex import RegexValidator, RegexValidationStoppingCriteria
+from src.antislop_logits_processor import SlopPhraseLogitsProcessor
 
 from src.util import precompute_starting_tokens
 import asyncio
@@ -105,6 +107,12 @@ class AntiSlopSampler:
     def _generate_streaming(self, current_input_ids, new_toks_to_generate, temperature, min_p, top_k, top_p, pad_token_id, stopping_criteria_args):
         streamer = TextIteratorStreamer(self.tokenizer, skip_special_tokens=False)
 
+        # Attach any stopping criteria you already built
+        # plus your new SlopPhraseLogitsProcessor:
+        logits_processor = LogitsProcessorList([
+            SlopPhraseLogitsProcessor(self.slop_phrase_handler)
+        ])
+
         generation_kwargs = dict(
             input_ids=current_input_ids,
             attention_mask=torch.ones_like(current_input_ids),
@@ -119,6 +127,7 @@ class AntiSlopSampler:
             return_dict_in_generate=True,
             output_logits=True,
             streamer=streamer,
+            logits_processor=logits_processor,
             **stopping_criteria_args
         )
 
