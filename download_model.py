@@ -18,7 +18,8 @@ def download_and_save_model(model_name: str, output_path: str):
     print(f"Saved model to {output_path}")
 
 if __name__ == "__main__":
-    model_name = "lemon07r/Gemma-2-Ataraxy-v2-9B"
+    #model_name = "lemon07r/Gemma-2-Ataraxy-v2-9B"
+    model_name = "lemon07r/Gemma-2-Ataraxy-9B"
     output_path = "./gemma_model"  # This will create a directory with all model files
     
     download_and_save_model(model_name, output_path) 
