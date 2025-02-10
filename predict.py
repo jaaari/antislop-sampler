@@ -116,31 +116,35 @@ class Predictor(BasePredictor):
             for phrase, adjustment in slop_phrases:
                 slop_adjustments[phrase] = float(adjustment)
 
-        # Generate text using AntiSlop
-        generation_kwargs = {
-            "model": self.model,
-            "tokenizer": self.tokenizer,
-            "prompt": prompt,
-            "max_new_tokens": max_new_tokens,
-            "temperature": temperature,
-            "top_k": top_k,
-            "top_p": top_p,
-            "device": self.device,
-            "streaming": False,
-            "enforce_json": enforce_json,
-            "antislop_enabled": antislop_enabled,
-            "regex_bans": regex_bans
-        }
+        # Create messages list for chat template
+        messages = [{"role": "user", "content": prompt}]
         
-        # Only add min_p and slop parameters if antislop is enabled
-        if antislop_enabled:
-            generation_kwargs["min_p"] = min_p
-            generation_kwargs["slop_phrase_prob_adjustments"] = slop_adjustments
-            # Pass the new removal_factor (a value between 0 and 1)
-            generation_kwargs["adjustment_strength"] = removal_factor
+        # Apply chat template
+        prompt_with_template = self.tokenizer.apply_chat_template(messages, tokenize=False)
 
-        # Generate text using AntiSlop
-        generated_tokens = generate_antislop(**generation_kwargs)
+        # Generate text using generate_antislop
+        generated_tokens = generate_antislop(
+            model=self.model,
+            tokenizer=self.tokenizer,
+            prompt=prompt_with_template,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            min_p=min_p,
+            slop_phrase_prob_adjustments=slop_adjustments,
+            adjustment_strength=removal_factor,
+            device=self.device,
+            streaming=False,
+            slow_debug=False,
+            output_every_n_tokens=1,
+            debug_delay=0.0,
+            inference_output=None,
+            debug_output=None,
+            enforce_json=enforce_json,
+            antislop_enabled=antislop_enabled,
+            regex_bans=regex_bans
+        )
 
         # Decode and return the generated text
         return self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
