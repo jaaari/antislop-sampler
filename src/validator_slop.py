@@ -30,10 +30,11 @@ def detect_disallowed_sequence(tokenizer: PreTrainedTokenizer,
             if candidate_str_length + char_offset > len(inference):
                 continue
             candidate_str = inference[-(candidate_str_length + char_offset):len(inference)-char_offset]
-            print(candidate_str)
+            #print(candidate_str)
             if candidate_str in slop_phrase_prob_adjustments:
                 # determine the token containing the beginning of the detected phrase
                 print('looking for', candidate_str,'in decoded text')
+                start = time.time()
                 for start_pos in range(len(generated_sequence)-1, prompt_length-1, -1):
                     candidate_seq = generated_sequence[start_pos:]
                     candidate_seq_decoded = tokenizer.decode(candidate_seq, skip_special_tokens=True).lower()
@@ -153,9 +154,9 @@ class SlopPhraseHandler:
         if matched_phrase:
             if self.slow_debug:
                 current_text = self.tokenizer.decode(generated_sequence[prompt_length:start_pos])
-                print([current_text])
+                #print([current_text])
                 matched_phrase_to_display = self.tokenizer.decode(generated_sequence[start_pos:], skip_special_tokens=True)
-                print([matched_phrase_to_display])
+                #print([matched_phrase_to_display])
                 # Add HTML formatting to display the matched_phrase in red
                 highlighted_text = f"{current_text}<span style='color: red;'>{matched_phrase_to_display}</span>"
                 
