@@ -87,11 +87,10 @@ class Predictor(BasePredictor):
             description="List of [phrase, adjustment] pairs for slop control. Example: [[\"a testament to\", \"0.3\"], [\"tapestry of\", \"0.1\"]]",
             default=None
         ),
-        removal_factor: float = Input(
-            description="Chance of removal factor for slop control (from 0 to 1). Controls the overall probability that a slop phrase triggers removal.",
-            default=0.5,
-            ge=0.0,
-            le=1.0
+        adjustment_strength: float = Input(
+            description="Strength of the slop adjustments (0 to disable, 100+ for strong effect)",
+            default=100.0,
+            ge=0.0
         ),
         antislop_enabled: bool = Input(
             description="Enable AntiSlop functionality",
@@ -116,24 +115,18 @@ class Predictor(BasePredictor):
             for phrase, adjustment in slop_phrases:
                 slop_adjustments[phrase] = float(adjustment)
 
-        # Create messages list for chat template
-        messages = [{"role": "user", "content": prompt}]
-        
-        # Apply chat template
-        prompt_with_template = self.tokenizer.apply_chat_template(messages, tokenize=False)
-
         # Generate text using generate_antislop
         generated_tokens = generate_antislop(
             model=self.model,
             tokenizer=self.tokenizer,
-            prompt=prompt_with_template,
+            prompt=prompt,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
             top_k=top_k,
             top_p=top_p,
             min_p=min_p,
             slop_phrase_prob_adjustments=slop_adjustments,
-            adjustment_strength=removal_factor,
+            adjustment_strength=adjustment_strength,
             device=self.device,
             streaming=False,
             slow_debug=False,
