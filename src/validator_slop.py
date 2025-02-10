@@ -30,16 +30,16 @@ def detect_disallowed_sequence(tokenizer: PreTrainedTokenizer,
             if candidate_str_length + char_offset > len(inference):
                 continue
             candidate_str = inference[-(candidate_str_length + char_offset):len(inference)-char_offset]
-            #print(candidate_str)
+            print(candidate_str)
             if candidate_str in slop_phrase_prob_adjustments:
                 # determine the token containing the beginning of the detected phrase
-                #print('looking for', candidate_str,'in decoded text')
+                print('looking for', candidate_str,'in decoded text')
                 for start_pos in range(len(generated_sequence)-1, prompt_length-1, -1):
                     candidate_seq = generated_sequence[start_pos:]
                     candidate_seq_decoded = tokenizer.decode(candidate_seq, skip_special_tokens=True).lower()
-                    #print(candidate_seq_decoded)
+                    print(candidate_seq_decoded)
                     if candidate_str in candidate_seq_decoded:
-                        #print('detected!', candidate_str, time.time() - start)
+                        print('detected!', candidate_str, time.time() - start)
                         return candidate_str, start_pos
                 # if we reached here, something went wrong
                 print('!! candidate_str not found after decoding')
@@ -108,7 +108,7 @@ class SlopPhraseHandler:
                 with debug_output:
                     debug_output.clear_output(wait=True)                        
 
-        #print('downregulating', [tokenizer.decode([generated_sequence[start_pos]])])
+        print('downregulating', [tokenizer.decode([generated_sequence[start_pos]])])
 
         # Identify starting tokens to downregulate
         slop_phrase_starting_token = generated_sequence[start_pos]
@@ -153,9 +153,9 @@ class SlopPhraseHandler:
         if matched_phrase:
             if self.slow_debug:
                 current_text = self.tokenizer.decode(generated_sequence[prompt_length:start_pos])
-                #print([current_text])
+                print([current_text])
                 matched_phrase_to_display = self.tokenizer.decode(generated_sequence[start_pos:], skip_special_tokens=True)
-                #print([matched_phrase_to_display])
+                print([matched_phrase_to_display])
                 # Add HTML formatting to display the matched_phrase in red
                 highlighted_text = f"{current_text}<span style='color: red;'>{matched_phrase_to_display}</span>"
                 
@@ -234,6 +234,6 @@ class CustomSlopPhraseStoppingCriteria(StoppingCriteria):
                                                                self.max_slop_phrase_length,
                                                                self.min_slop_phrase_length)
         if matched_phrase:
-            #print('matched', matched_phrase)
+            print('matched', matched_phrase)
             return True
         return False
